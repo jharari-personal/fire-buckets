@@ -261,7 +261,7 @@ function UrgencyBadge({ urgency }) {
   );
 }
 
-export default function PortfolioFramework() {
+function PortfolioFramework() {
   const [activePhase, setActivePhase] = useState("employed_early");
   const [portfolioValue, setPortfolioValue] = useState(451000);
   const [showTriggers, setShowTriggers] = useState(false);
@@ -516,4 +516,4 @@ export default function PortfolioFramework() {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<PortfolioFramework />);
