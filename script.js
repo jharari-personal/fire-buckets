@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+// 1. Access hooks from the global React object instead of importing
+const { useState, useEffect, useMemo, useCallback } = React;
 
 // ─── PERSISTENT STORAGE ───
 async function loadState() {
@@ -174,7 +175,7 @@ function ProjectionRow({ label, months, eurVal, target, color }) {
 }
 
 // ─── MAIN ───
-export default function Dashboard() {
+function Dashboard() {
   // State with defaults — overwritten by storage on mount
   const [portfolio, setPortfolio] = useState(451000);
   const [phase, setPhase] = useState("employed");
@@ -639,3 +640,6 @@ export default function Dashboard() {
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<Dashboard />);
