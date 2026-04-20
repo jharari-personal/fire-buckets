@@ -61,10 +61,10 @@ const PHASES = {
 };
 
 const BUCKET_META = {
-  growth:     { label: "Growth Engine",  inst: "VWCE → VWCE + SPYI/ISAC", color: "#2563eb", short: "Compounding machine. Never sell in drawdowns." },
-  fortress:   { label: "Fortress Cash",  inst: "XEON (€STR ~2.3%)",        color: "#059669", short: "Liquidity. Layoff runway years 0–2." },
-  termShield: { label: "Term Shield",    inst: "29GA → successor bond ETF", color: "#d97706", short: "Medium-term runway years 2–4." },
-  cash:       { label: "Strategic Cash",  inst: "EUR cash at IBKR",         color: "#6b7280", short: "DCA buffer or opportunity fund." },
+  growth:     { label: "Growth (VWCE)",  inst: "VWCE", color: "#2563eb", short: "Compounding machine. Never sell in drawdowns." },
+  fortress:   { label: "Safety (XEON)",  inst: "XEON (€STR ~2.3%)",        color: "#059669", short: "Liquidity. Layoff runway years 0–2." },
+  termShield: { label: "Runway (29GA)",    inst: "29GA → successor bond ETF", color: "#d97706", short: "Medium-term runway years 2–4." },
+  cash:       { label: "Cash",  inst: "EUR cash at IBKR",         color: "#6b7280", short: "DCA buffer or opportunity fund." },
 };
 
 const TRIGGERS = [
@@ -568,7 +568,7 @@ function Dashboard() {
                 {monthlyContrib > 0 ? "Assumes continued employment + contributions." : "No contributions (laid off / FIRE). Growth only."}
               </div>
 
-              <ProjectionRow label="Provider Diversification" months={projections.p500} target={500000} color="#2563eb" />
+              <ProjectionRow label="Coast FIRE" months={projections.p500} target={500000} color="#2563eb" />
               <ProjectionRow label="Aggressive FIRE" months={projections.aggressive} target={FIRE_TARGETS.aggressive} color="#d97706" />
               <ProjectionRow label="Recommended FIRE (3.5% SWR)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
               <ProjectionRow label="Bulletproof FIRE" months={projections.bulletproof} target={FIRE_TARGETS.bulletproof} color="#8b5cf6" />
