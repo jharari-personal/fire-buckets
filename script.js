@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+const { useState, useMemo, useEffect } = React;
 
 const PHASES = {
   employed_early: {
@@ -514,3 +514,6 @@ export default function PortfolioFramework() {
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
