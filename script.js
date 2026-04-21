@@ -21,14 +21,17 @@ function useWindowSize() {
 // ─── PERSISTENT STORAGE ───
 async function loadState() {
   try {
-    const r = await window.storage.get("harari-dashboard-state");
-    return r ? JSON.parse(r.value) : null;
+    const r = localStorage.getItem("harari-dashboard-state");
+    return r ? JSON.parse(r) : null;
   } catch { return null; }
 }
+
 async function saveState(state) {
   try {
-    await window.storage.set("harari-dashboard-state", JSON.stringify(state));
-  } catch (e) { console.error("Storage save failed:", e); }
+    localStorage.setItem("harari-dashboard-state", JSON.stringify(state));
+  } catch (e) { 
+    console.error("Storage save failed:", e); 
+  }
 }
 
 // ─── CONSTANTS ───
