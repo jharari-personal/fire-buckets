@@ -329,7 +329,7 @@ function Dashboard() {
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
   const valBase = 36000;
-  const valTotal = valBase + schoolCost;
+  const valTotal = valBase;
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
@@ -506,16 +506,23 @@ function Dashboard() {
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Operating Expense Levers</h3>
                 <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
                 <Slider label="Anti-Atrophy Local Services" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
-
                 <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
                   <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
                     <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, social infrastructure. Vital requirement for stability/stimulation constraint. Budget accordingly.
                   </div>
                 </div>
+                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #ec4899" }}>
+                  <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                    <strong style={{ color: "#ccc" }}>Flexible Travel Budget:</strong> Additional travelling budget, on top of the regular budget + anti-atrophy protocol. Can be moved up or down depending on circumstances.
+                  </div>
+                </div>
+                
+                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
+
+
               </Card>
             </div>
 
