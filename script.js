@@ -145,6 +145,7 @@ function Num({ children, color = "#fff", size = 20, mono = true }) {
 
 function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
+  const flashStyle = useFlash(swr, "text");
   let bg, label;
   
   if (swr <= 0) { bg = "#555"; label = "INVALID"; }
