@@ -1,7 +1,7 @@
 {
   "name": "FIRE Command Center",
   "short_name": "FIRE Command",
-  "start_url": "/",
+  "start_url": "/fire-buckets/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
