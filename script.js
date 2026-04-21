@@ -160,7 +160,7 @@ function SWRBadge({ swr, size = "large" }) {
       <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: flashStyle.color || bg, fontFamily: "monospace", lineHeight: 1, transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>
         {swr > 0 ? `${swr.toFixed(2)}%` : "N/A"}
       </span>
-      {/* <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label} SWR</span> */}
+      <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label}</span>
     </div>
   );
 }
