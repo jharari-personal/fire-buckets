@@ -294,15 +294,6 @@ function Dashboard() {
     }
   };
 
-  {deferredPrompt && (
-  <button onClick={handleInstallClick} style={{
-    width: "100%", padding: 12, background: "#059669", color: "#fff", 
-    border: "none", borderRadius: 8, marginBottom: 16, fontWeight: 700, cursor: "pointer"
-  }}>
-    Install App
-  </button>
-)}
-
   useEffect(() => {
     (async () => {
       const s = await loadState();
@@ -432,6 +423,17 @@ function Dashboard() {
             State persists between sessions. Update portfolio value monthly after checking IBKR.
           </p>
         </div>
+
+        {/* INSTALL BUTTON GOES HERE INSIDE THE RETURN */}
+        {deferredPrompt && (
+          <button onClick={handleInstallClick} style={{
+            width: "100%", padding: 12, background: "#059669", color: "#fff", 
+            border: "none", borderRadius: 8, marginBottom: 20, fontWeight: 700, cursor: "pointer",
+            fontFamily: "inherit"
+          }}>
+            Install App to Home Screen
+          </button>
+        )}
 
         {/* TOP STRIP METRICS */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
