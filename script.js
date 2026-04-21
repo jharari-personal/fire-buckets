@@ -273,6 +273,36 @@ function Dashboard() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("runway");
 
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    }
+  };
+
+  {deferredPrompt && (
+  <button onClick={handleInstallClick} style={{
+    width: "100%", padding: 12, background: "#059669", color: "#fff", 
+    border: "none", borderRadius: 8, marginBottom: 16, fontWeight: 700, cursor: "pointer"
+  }}>
+    Install App
+  </button>
+)}
+
   useEffect(() => {
     (async () => {
       const s = await loadState();
