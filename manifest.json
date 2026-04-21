@@ -1,7 +1,9 @@
 {
-  "name": "FIRE Command Center",
-  "short_name": "FIRE Command",
-  "start_url": "/fire-buckets/",
+  "name": "Financial Command Center",
+  "short_name": "Command Center",
+  "id": "/fire-buckets/",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
