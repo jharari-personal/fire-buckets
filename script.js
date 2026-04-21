@@ -1,5 +1,22 @@
-// 1. Access hooks from the global React object instead of importing
 const { useState, useEffect, useMemo, useCallback } = React;
+
+// ─── UTILS ───
+function useWindowSize() {
+  const [windowSize, setWindowSize] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
+
+  useEffect(() => {
+    function handleResize() {
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  return windowSize;
+}
 
 // ─── PERSISTENT STORAGE ───
 async function loadState() {
@@ -81,7 +98,6 @@ const TRIGGERS = [
 ];
 
 // ─── COMPONENTS ───
-
 function Num({ children, color = "#fff", size = 20, mono = true }) {
   return <span style={{ fontSize: size, fontWeight: 700, color, fontFamily: mono ? "monospace" : "inherit", lineHeight: 1 }}>{children}</span>;
 }
@@ -176,7 +192,9 @@ function ProjectionRow({ label, months, eurVal, target, color }) {
 
 // ─── MAIN ───
 function Dashboard() {
-  // State with defaults — overwritten by storage on mount
+  const { width } = useWindowSize();
+  const isMobile = width <= 768;
+
   const [portfolio, setPortfolio] = useState(451000);
   const [phase, setPhase] = useState("employed");
   const [monthlyContrib, setMonthlyContrib] = useState(6000);
@@ -188,9 +206,8 @@ function Dashboard() {
   const [realReturn, setRealReturn] = useState(5);
   const [showTriggers, setShowTriggers] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("runway"); // runway | allocator | projection
+  const [tab, setTab] = useState("runway");
 
-  // Load from storage on mount
   useEffect(() => {
     (async () => {
       const s = await loadState();
@@ -209,7 +226,6 @@ function Dashboard() {
     })();
   }, []);
 
-  // Auto-save on change
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
@@ -218,11 +234,9 @@ function Dashboard() {
     return () => clearTimeout(t);
   }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, bgTax10, realReturn]);
 
-  // ─── DERIVED MATH ───
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
-  // Plovdiv math
   const plovGross = annualExpense + antiAtrophy + schoolCost;
   const plovIncomeOffset = wifeIncome * 12;
   const plovNetDraw = Math.max(0, plovGross - plovIncomeOffset);
@@ -230,27 +244,22 @@ function Dashboard() {
   const plovTotal = plovNetDraw + plovTaxDrag;
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
-  // Valencia math (Beckham Law active)
   const valBase = 36000;
-  const valAntiAtrophy = 2000; // lower: environment solves most of it
-  const valSchool = 0; // public bilingual
+  const valAntiAtrophy = 2000;
+  const valSchool = 0;
   const valTotal = valBase + valAntiAtrophy + valSchool;
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
-  // Runway months from non-growth buckets
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
   const termEur = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
   const cashEur = Math.round(portfolio * phaseData.buckets.cash.target / 100);
   const monthlyBurn = plovTotal / 12;
   const runwayMonths = monthlyBurn > 0 ? Math.round((fortressEur + termEur + cashEur) / monthlyBurn) : 999;
 
-  // Projection: months to each FIRE target
   const monthsTo = useCallback((target) => {
     if (portfolio >= target) return null;
     const r = realReturn / 100 / 12;
     const c = monthlyContrib;
-    // FV = PV*(1+r)^n + c*((1+r)^n - 1)/r = target
-    // Solve numerically
     for (let n = 1; n <= 360; n++) {
       const fv = portfolio * Math.pow(1 + r, n) + c * (Math.pow(1 + r, n) - 1) / (r || 0.0001);
       if (fv >= target) return n;
@@ -265,7 +274,6 @@ function Dashboard() {
     bulletproof: monthsTo(FIRE_TARGETS.bulletproof),
   }), [monthsTo]);
 
-  // FIRE gap
   const fireGap = Math.max(0, FIRE_TARGETS.recommended - portfolio);
   const fireProgress = Math.min(100, (portfolio / FIRE_TARGETS.recommended) * 100);
 
@@ -279,16 +287,15 @@ function Dashboard() {
     <div style={{
       minHeight: "100vh", background: "#0a0a0a", color: "#ddd",
       fontFamily: "'IBM Plex Sans', 'SF Pro Text', -apple-system, sans-serif",
-      padding: "20px 16px 40px",
+      padding: isMobile ? "16px 12px 30px" : "20px 16px 40px",
     }}>
       <div style={{ maxWidth: 840, margin: "0 auto" }}>
 
-        {/* ═══ HEADER ═══ */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", color: "#444", textTransform: "uppercase", fontFamily: "monospace" }}>
             PORTFOLIO OPERATING SYSTEM
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: "4px 0 0", letterSpacing: "-0.03em" }}>
+          <h1 style={{ fontSize: isMobile ? 22 : 24, fontWeight: 800, color: "#fff", margin: "4px 0 0", letterSpacing: "-0.03em" }}>
             Financial Command Center
           </h1>
           <p style={{ fontSize: 12, color: "#555", margin: "4px 0 0" }}>
@@ -296,8 +303,7 @@ function Dashboard() {
           </p>
         </div>
 
-        {/* ═══ TOP STRIP: KEY NUMBERS ═══ */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
           {[
             { label: "Portfolio", value: `€${(portfolio/1000).toFixed(0)}k`, color: "#fff" },
             { label: "FIRE Gap", value: fireGap > 0 ? `€${(fireGap/1000).toFixed(0)}k` : "DONE", color: fireGap > 0 ? "#f59e0b" : "#059669" },
@@ -311,7 +317,6 @@ function Dashboard() {
           ))}
         </div>
 
-        {/* FIRE progress bar */}
         <div style={{ marginBottom: 24, padding: "0 2px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 4, fontFamily: "monospace" }}>
             <span>€0</span>
@@ -324,7 +329,7 @@ function Dashboard() {
               transition: "width 0.5s ease",
             }} />
             {[550, 625, 700].map(t => {
-              const pos = (t / 750) * 100; // scale to max ~750k for visual
+              const pos = (t / 750) * 100;
               return pos < 98 ? (
                 <div key={t} style={{
                   position: "absolute", left: `${Math.min(pos, 95)}%`, top: 0, height: "100%", width: 1,
@@ -339,16 +344,15 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* ═══ PHASE SELECTOR ═══ */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: isMobile ? 8 : 6, marginBottom: 20, flexWrap: "wrap" }}>
           {Object.entries(PHASES).map(([key, p]) => (
             <button key={key} onClick={() => setPhase(key)} style={{
-              padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+              padding: isMobile ? "10px 14px" : "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
               border: phase === key ? "1px solid #fff" : "1px solid #222",
               background: phase === key ? "#fff" : "transparent",
               color: phase === key ? "#000" : "#666",
               fontSize: 12, fontWeight: phase === key ? 700 : 500,
-              transition: "all 0.15s",
+              transition: "all 0.15s", flex: isMobile ? "1 1 calc(50% - 8px)" : "initial"
             }}>
               <span style={{ marginRight: 5, opacity: 0.6 }}>{p.icon}</span>{p.label}
             </button>
@@ -362,121 +366,82 @@ function Dashboard() {
         }}>
           <div>
             <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{phaseData.label}</span>
-            <span style={{ fontSize: 12, color: "#666", marginLeft: 10 }}>{phaseData.subtitle}</span>
+            <span style={{ fontSize: 12, color: "#666", marginLeft: 10, display: isMobile ? "block" : "inline", marginTop: isMobile ? 4 : 0 }}>{phaseData.subtitle}</span>
           </div>
           <span style={{ fontSize: 11, color: phaseData.color, fontWeight: 600 }}>ACTIVE PHASE</span>
         </div>
 
-        {/* ═══ TAB SWITCHER ═══ */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222" }}>
+        <div style={{ 
+          display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222", 
+          overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
+        }}>
           {[
             { key: "runway", label: "Runway & Levers" },
             { key: "allocator", label: "Allocation" },
             { key: "projection", label: "Projection" },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{
-              padding: "10px 20px", background: "transparent", border: "none",
+              padding: isMobile ? "12px 16px" : "10px 20px", background: "transparent", border: "none",
               borderBottom: tab === t.key ? "2px solid #fff" : "2px solid transparent",
               color: tab === t.key ? "#fff" : "#555", fontSize: 13, fontWeight: tab === t.key ? 700 : 500,
-              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", flexShrink: 0
             }}>{t.label}</button>
           ))}
         </div>
 
-        {/* ═══ TAB: RUNWAY & LEVERS ═══ */}
         {tab === "runway" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            {/* LEFT: Coast FIRE Levers */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 28 }}>
             <Card highlight>
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Expense & Income Levers</h3>
 
-              <Slider label="Portfolio Value" value={portfolio} onChange={setPortfolio}
-                min={200000} max={1000000} step={5000} color="#fff"
-                format={v => `€${v.toLocaleString()}`} />
-
-              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib}
-                min={0} max={10000} step={500} color="#2563eb"
-                format={v => `€${v.toLocaleString()}`} suffix="/mo" />
-
-              <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense}
-                min={15000} max={40000} step={1000} color="#ef4444"
-                format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-
-              <Slider label="Anti-Atrophy Budget" value={antiAtrophy} onChange={setAntiAtrophy}
-                min={0} max={10000} step={500} color="#8b5cf6"
-                format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-
-              <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome}
-                min={0} max={1500} step={50} color="#10b981"
-                format={v => `€${v}`} suffix="/mo" />
-
-              <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost}
-                min={0} max={15000} step={1000} color="#f59e0b"
-                format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+              <Slider label="Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
+              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+              <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+              <Slider label="Anti-Atrophy Budget" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={10000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+              <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#10b981" format={v => `€${v}`} suffix="/mo" />
+              <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
 
               <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
                 <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                  <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, restaurants, social infrastructure.
-                  This is psychiatric maintenance, not discretionary. Budget accordingly.
+                  <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, restaurants, social infrastructure. This is psychiatric maintenance, not discretionary. Budget accordingly.
                 </div>
               </div>
             </Card>
 
-            {/* RIGHT: Geographic Arbitrage */}
             <Card highlight>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: 0 }}>Geographic Arbitrage</h3>
                 <button onClick={() => setBgTax10(!bgTax10)} style={{
-                  padding: "5px 10px", border: "none", borderRadius: 5, cursor: "pointer",
-                  background: bgTax10 ? "#7f1d1d" : "#065f46",
-                  color: bgTax10 ? "#fca5a5" : "#6ee7b7",
+                  padding: isMobile ? "8px 12px" : "5px 10px", border: "none", borderRadius: 5, cursor: "pointer",
+                  background: bgTax10 ? "#7f1d1d" : "#065f46", color: bgTax10 ? "#fca5a5" : "#6ee7b7",
                   fontSize: 10, fontWeight: 700, fontFamily: "monospace",
                 }}>
                   {bgTax10 ? "BG 10% CGT" : "BG 0% CGT"}
                 </button>
               </div>
 
-              {/* Plovdiv card */}
-              <div style={{
-                background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 10,
-                border: `1px solid ${bgTax10 ? "#7f1d1d44" : "#222"}`,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 10, border: `1px solid ${bgTax10 ? "#7f1d1d44" : "#222"}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0 }}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Plovdiv</div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-                      Gross: €{plovGross.toLocaleString()} — Income: €{plovIncomeOffset.toLocaleString()} — Net draw: €{plovTotal.toLocaleString()}/yr
-                    </div>
-                    {bgTax10 && plovTaxDrag > 0 && (
-                      <div style={{ fontSize: 10, color: "#f87171", marginTop: 3 }}>
-                        Includes ~€{Math.round(plovTaxDrag).toLocaleString()} tax drag (10% on ~50% of withdrawals)
-                      </div>
-                    )}
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Gross: €{plovGross.toLocaleString()} — Income: €{plovIncomeOffset.toLocaleString()} — Net draw: €{plovTotal.toLocaleString()}/yr</div>
+                    {bgTax10 && plovTaxDrag > 0 && <div style={{ fontSize: 10, color: "#f87171", marginTop: 3 }}>Includes ~€{Math.round(plovTaxDrag).toLocaleString()} tax drag (10% on ~50% of withdrawals)</div>}
                   </div>
                   <SWRBadge swr={plovSWR} />
                 </div>
               </div>
 
-              {/* Valencia card */}
-              <div style={{
-                background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 12,
-                border: "1px solid #222",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 12, border: "1px solid #222" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0 }}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Valencia <span style={{ fontSize: 10, color: "#d97706", fontWeight: 500 }}>Beckham Law</span></div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
-                      Net draw: €{valTotal.toLocaleString()}/yr — Foreign CGT: 0% (Beckham)
-                    </div>
-                    <div style={{ fontSize: 10, color: "#d97706", marginTop: 3 }}>
-                      Requires qualifying employment contract in Spain
-                    </div>
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr — Foreign CGT: 0% (Beckham)</div>
+                    <div style={{ fontSize: 10, color: "#d97706", marginTop: 3 }}>Requires qualifying employment contract in Spain</div>
                   </div>
                   <SWRBadge swr={valSWR} />
                 </div>
               </div>
 
-              {/* Decision logic */}
               <div style={{ padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#888", lineHeight: 1.6 }}>
                 {plovSWR <= 3.5 && !bgTax10 ? (
                   <span><strong style={{ color: "#059669" }}>Plovdiv optimal.</strong> SWR is safe, 0% CGT active. No reason to move.</span>
@@ -492,18 +457,15 @@ function Dashboard() {
           </div>
         )}
 
-        {/* ═══ TAB: ALLOCATION ═══ */}
         {tab === "allocator" && (
           <div style={{ marginBottom: 28 }}>
-            {/* Combined bar */}
             <div style={{ display: "flex", height: 28, borderRadius: 6, overflow: "hidden", border: "1px solid #222", marginBottom: 16 }}>
               {bucketKeys.map(k => {
                 const t = phaseData.buckets[k].target;
                 return t > 0 ? (
                   <div key={k} style={{
                     width: `${t}%`, background: BUCKET_META[k].color, display: "flex",
-                    alignItems: "center", justifyContent: "center", borderRight: "1px solid #0a0a0a",
-                    transition: "width 0.4s ease",
+                    alignItems: "center", justifyContent: "center", borderRight: "1px solid #0a0a0a", transition: "width 0.4s ease"
                   }}>
                     {t >= 6 && <span style={{ fontSize: 10, color: "#fff", fontWeight: 700, fontFamily: "monospace" }}>{t}%</span>}
                   </div>
@@ -511,7 +473,6 @@ function Dashboard() {
               })}
             </div>
 
-            {/* Legend */}
             <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
               {bucketKeys.filter(k => phaseData.buckets[k].target > 0).map(k => (
                 <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -522,12 +483,9 @@ function Dashboard() {
             </div>
 
             <Card>
-              {bucketKeys.map(k => (
-                <BucketRow key={k} bucketKey={k} alloc={phaseData.buckets[k]} portfolioValue={portfolio} />
-              ))}
+              {bucketKeys.map(k => <BucketRow key={k} bucketKey={k} alloc={phaseData.buckets[k]} portfolioValue={portfolio} />)}
             </Card>
 
-            {/* Hard rules */}
             <Card style={{ marginTop: 12, borderLeft: "3px solid #dc2626" }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Hard Rules</div>
               {[
@@ -546,17 +504,12 @@ function Dashboard() {
           </div>
         )}
 
-        {/* ═══ TAB: PROJECTION ═══ */}
         {tab === "projection" && (
           <div style={{ marginBottom: 28 }}>
             <Card highlight style={{ marginBottom: 16 }}>
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 14px" }}>Projection Inputs</h3>
-              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib}
-                min={0} max={10000} step={500} color="#2563eb"
-                format={v => `€${v.toLocaleString()}`} suffix="/mo" />
-              <Slider label="Expected Real Return" value={realReturn} onChange={setRealReturn}
-                min={2} max={10} step={0.5} color="#059669"
-                format={v => `${v.toFixed(1)}`} suffix="% / yr" />
+              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+              <Slider label="Expected Real Return" value={realReturn} onChange={setRealReturn} min={2} max={10} step={0.5} color="#059669" format={v => `${v.toFixed(1)}`} suffix="% / yr" />
               <div style={{ fontSize: 10, color: "#555", marginTop: -8 }}>
                 5% real = ~7-8% nominal minus 2-3% inflation. Conservative for 80%+ equity.
               </div>
@@ -573,7 +526,6 @@ function Dashboard() {
               <ProjectionRow label="Recommended FIRE (3.5% SWR)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
               <ProjectionRow label="Bulletproof FIRE" months={projections.bulletproof} target={FIRE_TARGETS.bulletproof} color="#8b5cf6" />
 
-              {/* Layoff scenario */}
               <div style={{ marginTop: 16, padding: "12px 14px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #dc2626" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5", marginBottom: 6 }}>Layoff Scenario (€0 contributions)</div>
                 <div style={{ fontSize: 11, color: "#888", lineHeight: 1.6 }}>
@@ -594,12 +546,10 @@ function Dashboard() {
           </div>
         )}
 
-        {/* ═══ TRIGGER EVENTS ═══ */}
         <button onClick={() => setShowTriggers(!showTriggers)} style={{
           width: "100%", background: "#111", border: "1px solid #222", borderRadius: 8,
-          padding: "12px 16px", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          marginBottom: showTriggers ? 10 : 0,
+          padding: isMobile ? "16px" : "12px 16px", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+          display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: showTriggers ? 10 : 0,
         }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#aaa" }}>Decision Triggers ({TRIGGERS.length})</span>
           <span style={{ fontSize: 16, color: "#555", transition: "transform 0.2s", transform: showTriggers ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
@@ -620,8 +570,7 @@ function Dashboard() {
                     </div>
                     <span style={{
                       padding: "2px 7px", borderRadius: 3, fontSize: 9, fontWeight: 700,
-                      background: urgColors[t.urgency] || "#1a1a1a",
-                      color: "#ddd", fontFamily: "monospace", letterSpacing: "0.05em",
+                      background: urgColors[t.urgency] || "#1a1a1a", color: "#ddd", fontFamily: "monospace", letterSpacing: "0.05em",
                     }}>{urgLabels[t.urgency]}</span>
                   </div>
                   <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5, paddingLeft: 14 }}>{t.action}</div>
@@ -631,7 +580,6 @@ function Dashboard() {
           </div>
         )}
 
-        {/* ═══ FOOTER ═══ */}
         <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
           Joseph Harari · U15566654 · Bulgarian Tax Resident · FIRE Target €625k (3.5% SWR on €22k base) · Last framework revision: April 2026
           <br/>State auto-saves. Update portfolio value monthly.
