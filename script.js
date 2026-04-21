@@ -150,9 +150,9 @@ function SWRBadge({ swr, size = "large" }) {
   
   if (swr <= 0) { bg = "#555"; label = "INVALID"; }
   else if (swr > 6.0) { bg = "#991b1b"; label = "CATASTROPHIC"; }
-  else if (swr > 4.5) { bg = "#dc2626"; label = "DANGER"; }
-  else if (swr > 3.8) { bg = "#d97706"; label = "ELEVATED"; }
-  else if (swr > 3.2) { bg = "#2563eb"; label = "TARGET"; }
+  else if (swr > 5.0) { bg = "#dc2626"; label = "DANGER"; }
+  else if (swr > 4.0) { bg = "#d97706"; label = "ELEVATED"; }
+  else if (swr > 3.5) { bg = "#2563eb"; label = "TARGET"; }
   else { bg = "#059669"; label = "SAFE"; }
   
   return (
@@ -160,7 +160,7 @@ function SWRBadge({ swr, size = "large" }) {
       <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: flashStyle.color || bg, fontFamily: "monospace", lineHeight: 1, transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>
         {swr > 0 ? `${swr.toFixed(2)}%` : "N/A"}
       </span>
-      <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label} SWR</span>
+      {/* <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label} SWR</span> */}
     </div>
   );
 }
@@ -506,22 +506,20 @@ function Dashboard() {
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Operating Expense Levers</h3>
                 <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
                 <Slider label="Anti-Atrophy Local Services" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
                 <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
                   <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
                     <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, social infrastructure. Vital requirement for stability/stimulation constraint. Budget accordingly.
                   </div>
                 </div>
-                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
                 <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #ec4899" }}>
                   <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
                     <strong style={{ color: "#ccc" }}>Flexible Travel Budget:</strong> Additional travelling budget, on top of the regular budget + anti-atrophy protocol. Can be moved up or down depending on circumstances.
                   </div>
                 </div>
-                
-                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
-
 
               </Card>
             </div>
