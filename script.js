@@ -1,4 +1,4 @@
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // ─── UTILS ───
 function useWindowSize() {
@@ -16,6 +16,44 @@ function useWindowSize() {
   }, []);
 
   return windowSize;
+}
+
+// ─── ANIMATION HOOK ───
+// Detects value changes and returns a temporary inline style object to create a "pulse" effect
+function useFlash(value, type = "text", skipInitial = true) {
+  const [flash, setFlash] = useState(false);
+  const prev = useRef(value);
+  const isInitial = useRef(skipInitial);
+
+  useEffect(() => {
+    if (isInitial.current) {
+      isInitial.current = false;
+      prev.current = value;
+      return;
+    }
+    if (prev.current !== value) {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 200); // Quick active state
+      prev.current = value;
+      return () => clearTimeout(t);
+    }
+  }, [value]);
+
+  if (!flash) return { transition: "all 0.8s ease-out" }; // Long fade out
+
+  if (type === "tab") return {
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    color: "#fff",
+    textShadow: "0 0 8px #fff",
+    transition: "none" // Instant flash
+  };
+
+  // Default text flash
+  return {
+    color: "#fff",
+    textShadow: "0 0 10px rgba(255, 255, 255, 0.8)",
+    transition: "none"
+  };
 }
 
 // ─── PERSISTENT STORAGE ───
@@ -108,6 +146,7 @@ function Num({ children, color = "#fff", size = 20, mono = true }) {
 function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
   let bg, label;
+  
   if (swr <= 0) { bg = "#555"; label = "INVALID"; }
   else if (swr > 6.0) { bg = "#991b1b"; label = "CATASTROPHIC"; }
   else if (swr > 4.5) { bg = "#dc2626"; label = "DANGER"; }
@@ -117,7 +156,7 @@ function SWRBadge({ swr, size = "large" }) {
   
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isLg ? "flex-end" : "flex-start", gap: 2 }}>
-      <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: bg, fontFamily: "monospace", lineHeight: 1 }}>
+      <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: flashStyle.color || bg, fontFamily: "monospace", lineHeight: 1, transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>
         {swr > 0 ? `${swr.toFixed(2)}%` : "N/A"}
       </span>
       <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label} SWR</span>
@@ -154,6 +193,10 @@ function BucketRow({ bucketKey, alloc, portfolioValue }) {
   const floorActive = alloc.floor && eurVal < alloc.floor;
   const effectiveEur = floorActive ? alloc.floor : eurVal;
   const pct = Math.min((alloc.target / 100) * 100, 100);
+  
+  const valFlash = useFlash(effectiveEur, "text");
+  const pctFlash = useFlash(alloc.target, "text");
+
   return (
     <div style={{ display: "flex", gap: 14, alignItems: "flex-start", padding: "14px 0", borderBottom: "1px solid #1a1a1a" }}>
       <div style={{ width: 4, height: 44, borderRadius: 2, background: m.color, flexShrink: 0, marginTop: 2 }} />
@@ -161,8 +204,8 @@ function BucketRow({ bucketKey, alloc, portfolioValue }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: "#eee" }}>{m.label}</span>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 11, color: "#666", fontFamily: "monospace" }}>€{effectiveEur.toLocaleString()}</span>
-            <span style={{ fontSize: 17, fontWeight: 700, color: m.color, fontFamily: "monospace" }}>{alloc.target}%</span>
+            <span style={{ fontSize: 11, color: valFlash.color || "#666", fontFamily: "monospace", transition: valFlash.transition, textShadow: valFlash.textShadow }}>€{effectiveEur.toLocaleString()}</span>
+            <span style={{ fontSize: 17, fontWeight: 700, color: pctFlash.color || m.color, fontFamily: "monospace", transition: pctFlash.transition, textShadow: pctFlash.textShadow }}>{alloc.target}%</span>
           </div>
         </div>
         <div style={{ width: "100%", height: 4, background: "#1a1a1a", borderRadius: 2, marginTop: 6 }}>
@@ -178,21 +221,25 @@ function BucketRow({ bucketKey, alloc, portfolioValue }) {
 }
 
 function ProjectionRow({ label, months, eurVal, target, color }) {
+  const flashStyle = useFlash(months, "text");
+
   if (months === null || months === Infinity) return (
     <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #111" }}>
       <span style={{ fontSize: 12, color: "#888" }}>{label} <span style={{ fontSize: 11, color: "#555" }}>€{target.toLocaleString()}</span></span>
-      <span style={{ fontSize: 12, color: "#555", fontFamily: "monospace" }}>Already passed</span>
+      <span style={{ fontSize: 12, color: flashStyle.color || "#555", fontFamily: "monospace", transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>Already passed</span>
     </div>
   );
+  
   const date = new Date();
   date.setMonth(date.getMonth() + months);
   const dateStr = date.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  
   return (
     <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #111" }}>
       <span style={{ fontSize: 12, color: "#888" }}>{label} <span style={{ fontSize: 11, color: "#555" }}>€{target.toLocaleString()}</span></span>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 12, color: "#555", fontFamily: "monospace" }}>{months} mo</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>{dateStr}</span>
+        <span style={{ fontSize: 12, color: flashStyle.color || "#555", fontFamily: "monospace", transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>{months} mo</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: flashStyle.color || color, fontFamily: "monospace", transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>{dateStr}</span>
       </div>
     </div>
   );
@@ -203,7 +250,7 @@ function Dashboard() {
   const { width } = useWindowSize();
   const isMobile = width <= 768;
 
-  const [portfolio, setPortfolio] = useState(470000); // Updated to 470k per recent severance injection 
+  const [portfolio, setPortfolio] = useState(470000); 
   const [phase, setPhase] = useState("employed");
   
   // Operating Levers
@@ -262,7 +309,7 @@ function Dashboard() {
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
-  // ─── OPTION 1: Plovdiv Status Quo
+  // ─── OPTION MATRICES ───
   const plovGross = annualExpense + antiAtrophy + schoolCost;
   const plovIncomeOffset = wifeIncome * 12;
   const plovNetDraw = Math.max(0, plovGross - plovIncomeOffset);
@@ -270,24 +317,19 @@ function Dashboard() {
   const plovTotal = plovNetDraw + plovTaxDrag;
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
-  // ─── OPTION 2: Asenovgrad Custom Build
   const buildCapital = portfolio - buildCost;
   const buildSWR = buildCapital > 0 ? (plovTotal / buildCapital) * 100 : 0;
 
-  // ─── OPTION 3: Resort Apartment Purchase
   const resortCapital = portfolio - resortCost;
   const resortNetDraw = plovTotal + resortFees;
   const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
 
-  // ─── OPTION 4: Flexible Travel Model
   const travelNetDraw = plovTotal + travelBudget;
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
-  // ─── OPTION 5: Valencia Relocation (Beckham Law)
   const valBase = 36000;
   const valTotal = valBase + schoolCost;
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
-
 
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
   const termEur = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
@@ -315,6 +357,24 @@ function Dashboard() {
 
   const fireGap = Math.max(0, FIRE_TARGETS.recommended - portfolio);
   const fireProgress = Math.min(100, (portfolio / FIRE_TARGETS.recommended) * 100);
+
+  // ─── FLASH HOOKS ───
+  const portFlash = useFlash(portfolio, "text");
+  const gapFlash = useFlash(fireGap, "text");
+  const runFlash = useFlash(runwayMonths, "text");
+  const swrFlash = useFlash(plovSWR, "text");
+
+  const pctFlash = useFlash(fireProgress, "text");
+  const mosFlash = useFlash(projections.recommended, "text");
+
+  // Determine when to flash the tabs by hashing their dependency variables
+  const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}`;
+  const allocHash = `${phase}-${portfolio}`;
+  const projHash = `${portfolio}-${monthlyContrib}-${realReturn}`;
+
+  const runTabFlash = useFlash(runHash, "tab");
+  const allocTabFlash = useFlash(allocHash, "tab");
+  const projTabFlash = useFlash(projHash, "tab");
 
   if (!loaded) return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -345,14 +405,14 @@ function Dashboard() {
         {/* TOP STRIP METRICS */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
           {[
-            { label: "Portfolio", value: `€${(portfolio/1000).toFixed(0)}k`, color: "#fff" },
-            { label: "FIRE Gap", value: fireGap > 0 ? `€${(fireGap/1000).toFixed(0)}k` : "DONE", color: fireGap > 0 ? "#f59e0b" : "#059669" },
-            { label: "Runway", value: `${runwayMonths} mo`, color: runwayMonths > 36 ? "#059669" : runwayMonths > 18 ? "#d97706" : "#dc2626" },
-            { label: "Plovdiv SWR", value: `${plovSWR.toFixed(1)}%`, color: plovSWR > 4.5 ? "#dc2626" : plovSWR > 3.8 ? "#d97706" : "#059669" },
+            { label: "Portfolio", value: `€${(portfolio/1000).toFixed(0)}k`, color: "#fff", f: portFlash },
+            { label: "FIRE Gap", value: fireGap > 0 ? `€${(fireGap/1000).toFixed(0)}k` : "DONE", color: fireGap > 0 ? "#f59e0b" : "#059669", f: gapFlash },
+            { label: "Runway", value: `${runwayMonths} mo`, color: runwayMonths > 36 ? "#059669" : runwayMonths > 18 ? "#d97706" : "#dc2626", f: runFlash },
+            { label: "Plovdiv SWR", value: `${plovSWR.toFixed(1)}%`, color: plovSWR > 4.5 ? "#dc2626" : plovSWR > 3.8 ? "#d97706" : "#059669", f: swrFlash },
           ].map((s, i) => (
             <div key={i} style={{ background: "#111", borderRadius: 8, padding: "12px 14px", border: "1px solid #1a1a1a" }}>
               <div style={{ fontSize: 10, color: "#555", letterSpacing: "0.05em", marginBottom: 4 }}>{s.label}</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: s.color, fontFamily: "monospace", lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: s.f.color || s.color, fontFamily: "monospace", lineHeight: 1, transition: s.f.transition, textShadow: s.f.textShadow }}>{s.value}</div>
             </div>
           ))}
         </div>
@@ -372,16 +432,13 @@ function Dashboard() {
             {[550, 625, 700].map(t => {
               const pos = (t / 750) * 100;
               return pos < 98 ? (
-                <div key={t} style={{
-                  position: "absolute", left: `${Math.min(pos, 95)}%`, top: 0, height: "100%", width: 1,
-                  background: "#333",
-                }} />
+                <div key={t} style={{ position: "absolute", left: `${Math.min(pos, 95)}%`, top: 0, height: "100%", width: 1, background: "#333" }} />
               ) : null;
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#444", marginTop: 3, fontFamily: "monospace" }}>
-            <span>{fireProgress.toFixed(0)}% of target</span>
-            <span>{projections.recommended !== null ? `~${projections.recommended} months to go` : "Target reached"}</span>
+            <span style={{ color: pctFlash.color, transition: pctFlash.transition, textShadow: pctFlash.textShadow }}>{fireProgress.toFixed(0)}% of target</span>
+            <span style={{ color: mosFlash.color, transition: mosFlash.transition, textShadow: mosFlash.textShadow }}>{projections.recommended !== null ? `~${projections.recommended} months to go` : "Target reached"}</span>
           </div>
         </div>
 
@@ -407,17 +464,26 @@ function Dashboard() {
           overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
         }}>
           {[
-            { key: "runway", label: "Runway & Levers" },
-            { key: "allocator", label: "Allocation" },
-            { key: "projection", label: "Projection" },
-          ].map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} style={{
-              padding: isMobile ? "12px 16px" : "10px 20px", background: "transparent", border: "none",
-              borderBottom: tab === t.key ? "2px solid #fff" : "2px solid transparent",
-              color: tab === t.key ? "#fff" : "#555", fontSize: 13, fontWeight: tab === t.key ? 700 : 500,
-              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", flexShrink: 0
-            }}>{t.label}</button>
-          ))}
+            { key: "runway", label: "Runway & Levers", flashStyle: runTabFlash },
+            { key: "allocator", label: "Allocation", flashStyle: allocTabFlash },
+            { key: "projection", label: "Projection", flashStyle: projTabFlash },
+          ].map(t => {
+            const isActive = tab === t.key;
+            const appliedFlash = !isActive ? t.flashStyle : { transition: "all 0.15s" };
+            
+            return (
+              <button key={t.key} onClick={() => setTab(t.key)} style={{
+                padding: isMobile ? "12px 16px" : "10px 20px", border: "none",
+                background: appliedFlash.backgroundColor || "transparent",
+                borderBottom: isActive ? "2px solid #fff" : "2px solid transparent",
+                color: isActive ? "#fff" : (appliedFlash.color || "#555"),
+                textShadow: appliedFlash.textShadow || "none",
+                fontSize: 13, fontWeight: isActive ? 700 : 500,
+                cursor: "pointer", fontFamily: "inherit", flexShrink: 0, 
+                borderRadius: "6px 6px 0 0", transition: appliedFlash.transition
+              }}>{t.label}</button>
+            )
+          })}
         </div>
 
         {/* TABS */}
