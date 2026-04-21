@@ -108,13 +108,18 @@ function Num({ children, color = "#fff", size = 20, mono = true }) {
 function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
   let bg, label;
-  if (swr > 4.5) { bg = "#dc2626"; label = "DANGER"; }
+  if (swr <= 0) { bg = "#555"; label = "INVALID"; }
+  else if (swr > 6.0) { bg = "#991b1b"; label = "CATASTROPHIC"; }
+  else if (swr > 4.5) { bg = "#dc2626"; label = "DANGER"; }
   else if (swr > 3.8) { bg = "#d97706"; label = "ELEVATED"; }
   else if (swr > 3.2) { bg = "#2563eb"; label = "TARGET"; }
   else { bg = "#059669"; label = "SAFE"; }
+  
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isLg ? "flex-end" : "flex-start", gap: 2 }}>
-      <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: bg, fontFamily: "monospace", lineHeight: 1 }}>{swr.toFixed(2)}%</span>
+      <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: bg, fontFamily: "monospace", lineHeight: 1 }}>
+        {swr > 0 ? `${swr.toFixed(2)}%` : "N/A"}
+      </span>
       <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label} SWR</span>
     </div>
   );
@@ -198,13 +203,22 @@ function Dashboard() {
   const { width } = useWindowSize();
   const isMobile = width <= 768;
 
-  const [portfolio, setPortfolio] = useState(451000);
+  const [portfolio, setPortfolio] = useState(470000); // Updated to 470k per recent severance injection 
   const [phase, setPhase] = useState("employed");
+  
+  // Operating Levers
   const [monthlyContrib, setMonthlyContrib] = useState(6000);
-  const [annualExpense, setAnnualExpense] = useState(22000);
+  const [annualExpense, setAnnualExpense] = useState(20000);
   const [wifeIncome, setWifeIncome] = useState(0);
   const [schoolCost, setSchoolCost] = useState(0);
   const [antiAtrophy, setAntiAtrophy] = useState(5000);
+  const [travelBudget, setTravelBudget] = useState(4000);
+  const [resortFees, setResortFees] = useState(1000);
+
+  // Capital Levers
+  const [buildCost, setBuildCost] = useState(250000);
+  const [resortCost, setResortCost] = useState(100000);
+
   const [bgTax10, setBgTax10] = useState(false);
   const [realReturn, setRealReturn] = useState(5);
   const [showTriggers, setShowTriggers] = useState(false);
@@ -222,6 +236,10 @@ function Dashboard() {
         if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
         if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
         if (s.antiAtrophy !== undefined) setAntiAtrophy(s.antiAtrophy);
+        if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
+        if (s.resortFees !== undefined) setResortFees(s.resortFees);
+        if (s.buildCost !== undefined) setBuildCost(s.buildCost);
+        if (s.resortCost !== undefined) setResortCost(s.resortCost);
         if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
         if (s.realReturn !== undefined) setRealReturn(s.realReturn);
       }
@@ -232,14 +250,19 @@ function Dashboard() {
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      saveState({ portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, bgTax10, realReturn });
+      saveState({ 
+        portfolio, phase, monthlyContrib, annualExpense, wifeIncome, 
+        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, 
+        resortCost, bgTax10, realReturn 
+      });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, bgTax10, realReturn]);
+  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, resortCost, bgTax10, realReturn]);
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
+  // ─── OPTION 1: Plovdiv Status Quo
   const plovGross = annualExpense + antiAtrophy + schoolCost;
   const plovIncomeOffset = wifeIncome * 12;
   const plovNetDraw = Math.max(0, plovGross - plovIncomeOffset);
@@ -247,11 +270,24 @@ function Dashboard() {
   const plovTotal = plovNetDraw + plovTaxDrag;
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
+  // ─── OPTION 2: Asenovgrad Custom Build
+  const buildCapital = portfolio - buildCost;
+  const buildSWR = buildCapital > 0 ? (plovTotal / buildCapital) * 100 : 0;
+
+  // ─── OPTION 3: Resort Apartment Purchase
+  const resortCapital = portfolio - resortCost;
+  const resortNetDraw = plovTotal + resortFees;
+  const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
+
+  // ─── OPTION 4: Flexible Travel Model
+  const travelNetDraw = plovTotal + travelBudget;
+  const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
+
+  // ─── OPTION 5: Valencia Relocation (Beckham Law)
   const valBase = 36000;
-  const valAntiAtrophy = 2000;
-  const valSchool = 0;
-  const valTotal = valBase + valAntiAtrophy + valSchool;
+  const valTotal = valBase + schoolCost;
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
+
 
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
   const termEur = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
@@ -306,6 +342,7 @@ function Dashboard() {
           </p>
         </div>
 
+        {/* TOP STRIP METRICS */}
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
           {[
             { label: "Portfolio", value: `€${(portfolio/1000).toFixed(0)}k`, color: "#fff" },
@@ -320,6 +357,7 @@ function Dashboard() {
           ))}
         </div>
 
+        {/* PROGRESS BAR */}
         <div style={{ marginBottom: 24, padding: "0 2px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 4, fontFamily: "monospace" }}>
             <span>€0</span>
@@ -347,6 +385,7 @@ function Dashboard() {
           </div>
         </div>
 
+        {/* PHASE SELECTOR */}
         <div style={{ display: "flex", gap: isMobile ? 8 : 6, marginBottom: 20, flexWrap: "wrap" }}>
           {Object.entries(PHASES).map(([key, p]) => (
             <button key={key} onClick={() => setPhase(key)} style={{
@@ -362,18 +401,7 @@ function Dashboard() {
           ))}
         </div>
 
-        <div style={{
-          background: "#111", border: `1px solid ${phaseData.color}22`, borderLeft: `3px solid ${phaseData.color}`,
-          borderRadius: 8, padding: "10px 16px", marginBottom: 20,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
-          <div>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{phaseData.label}</span>
-            <span style={{ fontSize: 12, color: "#666", marginLeft: 10, display: isMobile ? "block" : "inline", marginTop: isMobile ? 4 : 0 }}>{phaseData.subtitle}</span>
-          </div>
-          <span style={{ fontSize: 11, color: phaseData.color, fontWeight: 600 }}>ACTIVE PHASE</span>
-        </div>
-
+        {/* TAB SWITCHER */}
         <div style={{ 
           display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222", 
           overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
@@ -392,28 +420,42 @@ function Dashboard() {
           ))}
         </div>
 
+        {/* TABS */}
         {tab === "runway" && (
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <Card highlight>
-              <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Expense & Income Levers</h3>
+            
+            {/* LEVERS COLUMN */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <Card highlight>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
+                <Slider label="Liquid Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
+                <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+                <div style={{ height: 1, background: "#222", margin: "16px 0" }} />
+                <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />
+                <Slider label="Resort Apartment Cost" value={resortCost} onChange={setResortCost} min={50000} max={200000} step={5000} color="#059669" format={v => `€${v.toLocaleString()}`} />
+              </Card>
 
-              <Slider label="Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
-              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
-              <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-              <Slider label="Anti-Atrophy Budget" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={10000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-              <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#10b981" format={v => `€${v}`} suffix="/mo" />
-              <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+              <Card highlight>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Operating Expense Levers</h3>
+                <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Anti-Atrophy Local Services" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
 
-              <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
-                <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                  <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, restaurants, social infrastructure. This is psychiatric maintenance, not discretionary. Budget accordingly.
+                <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
+                  <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                    <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, social infrastructure. Vital requirement for stability/stimulation constraint. Budget accordingly.
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            </div>
 
+            {/* GEOGRAPHIC ARBITRAGE COLUMN */}
             <Card highlight>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: 0 }}>Geographic Arbitrage</h3>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: 0 }}>Geographic Arbitrage Scenarios</h3>
                 <button onClick={() => setBgTax10(!bgTax10)} style={{
                   padding: isMobile ? "8px 12px" : "5px 10px", border: "none", borderRadius: 5, cursor: "pointer",
                   background: bgTax10 ? "#7f1d1d" : "#065f46", color: bgTax10 ? "#fca5a5" : "#6ee7b7",
@@ -423,43 +465,78 @@ function Dashboard() {
                 </button>
               </div>
 
-              <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 10, border: `1px solid ${bgTax10 ? "#7f1d1d44" : "#222"}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Plovdiv</div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Gross: €{plovGross.toLocaleString()} — Income: €{plovIncomeOffset.toLocaleString()} — Net draw: €{plovTotal.toLocaleString()}/yr</div>
-                    {bgTax10 && plovTaxDrag > 0 && <div style={{ fontSize: 10, color: "#f87171", marginTop: 3 }}>Includes ~€{Math.round(plovTaxDrag).toLocaleString()} tax drag (10% on ~50% of withdrawals)</div>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                
+                {/* STATUS QUO */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${bgTax10 ? "#7f1d1d44" : "#222"}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>1. Plovdiv Status Quo</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{plovTotal.toLocaleString()}/yr</div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Zero capital risk. Optimal financially, but fails social and stimulation constraints without heavy anti-atrophy spend.</div>
+                    </div>
+                    <SWRBadge swr={plovSWR} size="small" />
                   </div>
-                  <SWRBadge swr={plovSWR} />
                 </div>
-              </div>
 
-              <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 16, marginBottom: 12, border: "1px solid #222" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Valencia <span style={{ fontSize: 10, color: "#d97706", fontWeight: 500 }}>Beckham Law</span></div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr — Foreign CGT: 0% (Beckham)</div>
-                    <div style={{ fontSize: 10, color: "#d97706", marginTop: 3 }}>Requires qualifying employment contract in Spain</div>
+                {/* VALENCIA */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #1e3a8a" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>2. Valencia Relocation</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr <span style={{ color: "#2563eb", fontWeight: 700 }}>Beckham Law</span></div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>The structural endgame. Requires qualifying Spanish contract first to shield equity portfolio.</div>
+                    </div>
+                    <SWRBadge swr={valSWR} size="small" />
                   </div>
-                  <SWRBadge swr={valSWR} />
                 </div>
-              </div>
 
-              <div style={{ padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#888", lineHeight: 1.6 }}>
-                {plovSWR <= 3.5 && !bgTax10 ? (
-                  <span><strong style={{ color: "#059669" }}>Plovdiv optimal.</strong> SWR is safe, 0% CGT active. No reason to move.</span>
-                ) : plovSWR > valSWR && bgTax10 ? (
-                  <span><strong style={{ color: "#d97706" }}>Valencia becoming competitive.</strong> If BG taxes rise and you can secure Spanish employment, Valencia SWR ({valSWR.toFixed(1)}%) beats Plovdiv ({plovSWR.toFixed(1)}%). Activate Beckham playbook.</span>
-                ) : plovSWR > 4.0 ? (
-                  <span><strong style={{ color: "#f59e0b" }}>SWR elevated.</strong> Either reduce expenses, activate wife's income, or evaluate relocation triggers.</span>
-                ) : (
-                  <span><strong style={{ color: "#ccc" }}>Plovdiv preferred.</strong> Lower cost base. Valencia only makes sense with Beckham Law + employment.</span>
-                )}
+                {/* ASENOVGRAD */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, buildCapital).toLocaleString()}</div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Concentrates capital risk. Extreme construction stress. Exacerbates rural isolation.</div>
+                    </div>
+                    <SWRBadge swr={buildSWR} size="small" />
+                  </div>
+                </div>
+
+                {/* RESORT */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>4. Resort Apartment</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, resortCapital).toLocaleString()}</div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>High logistical friction (packing/driving). Off-season boredom (Pamporovo) or toxic smog (Velingrad).</div>
+                    </div>
+                    <SWRBadge swr={resortSWR} size="small" />
+                  </div>
+                </div>
+
+                {/* FLEXIBLE TRAVEL */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>5. Flexible Travel</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{travelNetDraw.toLocaleString()}/yr</div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Financially optimal. High chaos and transient lifestyle. Fails to build permanent local community.</div>
+                    </div>
+                    <SWRBadge swr={travelSWR} size="small" />
+                  </div>
+                </div>
+
+              </div>
+              
+              <div style={{ marginTop: 16, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#888", lineHeight: 1.6 }}>
+                <strong>Recommendation: The Sequenced Hybrid.</strong> Optimize Plovdiv status quo with targeted premium anti-atrophy spend during the income gap. Trigger Valencia relocation <em>only</em> upon securing an employment contract to activate the Beckham Law shield.
               </div>
             </Card>
           </div>
         )}
 
+        {/* TAB: ALLOCATOR */}
         {tab === "allocator" && (
           <div style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", height: 28, borderRadius: 6, overflow: "hidden", border: "1px solid #222", marginBottom: 16 }}>
@@ -507,6 +584,7 @@ function Dashboard() {
           </div>
         )}
 
+        {/* TAB: PROJECTION */}
         {tab === "projection" && (
           <div style={{ marginBottom: 28 }}>
             <Card highlight style={{ marginBottom: 16 }}>
@@ -549,6 +627,7 @@ function Dashboard() {
           </div>
         )}
 
+        {/* TRIGGERS */}
         <button onClick={() => setShowTriggers(!showTriggers)} style={{
           width: "100%", background: "#111", border: "1px solid #222", borderRadius: 8,
           padding: isMobile ? "16px" : "12px 16px", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
