@@ -1,17 +1,20 @@
-const CACHE_NAME = 'fcc-cache-v3'; // Bumped version to strictly force update
+const CACHE_NAME = 'fcc-cache-v4';
+
+// Use absolute paths tied specifically to your GH Pages repository
 const ASSETS = [
-  './index.html',
-  './script.js',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
+  '/fire-buckets/',
+  '/fire-buckets/index.html',
+  '/fire-buckets/script.js',
+  '/fire-buckets/manifest.json',
+  '/fire-buckets/icon-192.png',
+  '/fire-buckets/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
-  self.skipWaiting(); // Force the waiting service worker to become the active service worker
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -20,7 +23,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName); // Purge old caches
+            return caches.delete(cacheName);
           }
         })
       );
@@ -32,14 +35,16 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request).then((response) => {
+      // 1. Return cached asset if found
       if (response) return response;
       
-      // Fallback: If navigating to the directory root, return index.html
-      if (event.request.mode === 'navigate') {
-        return caches.match('./index.html');
-      }
-      
-      return fetch(event.request);
+      // 2. Fetch from network if not in cache
+      return fetch(event.request).catch(() => {
+        // 3. Fallback if network fails and user is navigating
+        if (event.request.mode === 'navigate') {
+          return caches.match('/fire-buckets/index.html');
+        }
+      });
     })
   );
 });
