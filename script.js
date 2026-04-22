@@ -339,8 +339,10 @@ function Dashboard() {
   const plovTotal = plovNetDraw + plovTaxDrag;
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
+  const buildRental = 10800;
   const buildCapital = portfolio - buildCost;
-  const buildSWR = buildCapital > 0 ? (plovTotal / buildCapital) * 100 : 0;
+  const buildNetDraw = Math.max(0, plovTotal - buildRental);
+  const buildSWR = buildCapital > 0 ? (buildNetDraw / buildCapital) * 100 : 0;
 
   const resortCapital = portfolio - resortCost;
   const resortNetDraw = plovTotal + resortFees;
@@ -350,7 +352,7 @@ function Dashboard() {
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
   const valBase = 36000;
-  const valTotal = valBase;
+  const valTotal = valBase + schoolCost;
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
@@ -463,7 +465,7 @@ function Dashboard() {
               transition: "width 0.5s ease",
             }} />
             {[550, 625, 700].map(t => {
-              const pos = (t / 750) * 100;
+              const pos = (t / 625) * 100;
               return pos < 98 ? (
                 <div key={t} style={{ position: "absolute", left: `${Math.min(pos, 95)}%`, top: 0, height: "100%", width: 1, background: "#333" }} />
               ) : null;
@@ -529,27 +531,27 @@ function Dashboard() {
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
                 <Slider label="Liquid Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
                 <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+                <Slider label="Extra Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
                 <div style={{ height: 1, background: "#222", margin: "16px 0" }} />
                 <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />
                 <Slider label="Resort Apartment Cost" value={resortCost} onChange={setResortCost} min={50000} max={200000} step={5000} color="#059669" format={v => `€${v.toLocaleString()}`} />
               </Card>
 
               <Card highlight>
-                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Operating Expense Levers</h3>
-                <Slider label="Base Annual Expenses" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Anti-Atrophy Local Services" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Flexible Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Resort Annual Fees" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Expense Levers</h3>
+                <Slider label="Regular Budget" value={annualExpense} onChange={setAnnualExpense} min={15000} max={40000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Extra Fun Budget" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Extra Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <Slider label="Second Home Maintenance" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
                 <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Wife's Coaching Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
                 <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
                   <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                    <strong style={{ color: "#ccc" }}>Anti-Atrophy Protocol:</strong> Pulse membership, slow travel, social infrastructure. Vital requirement for stability/stimulation constraint. Budget accordingly.
+                    <strong style={{ color: "#ccc" }}>Fun Budget:</strong> Clothes, Entertainment, Hobbies, Beauty, etc
                   </div>
                 </div>
                 <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #ec4899" }}>
                   <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                    <strong style={{ color: "#ccc" }}>Flexible Travel Budget:</strong> Additional travelling budget, on top of the regular budget + anti-atrophy protocol. Can be moved up or down depending on circumstances.
+                    <strong style={{ color: "#ccc" }}>Travel Budget:</strong> Additional travelling budget, on top of the regular budget. Can be moved up or down depending on circumstances.
                   </div>
                 </div>
 
@@ -600,7 +602,7 @@ function Dashboard() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, buildCapital).toLocaleString()}</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, buildCapital).toLocaleString()} Draw: €{buildNetDraw.toLocaleString()}/yr (after rental)</div>
                       <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Concentrates capital risk. Extreme construction stress. Exacerbates rural isolation.</div>
                     </div>
                     <SWRBadge swr={buildSWR} size="small" />
@@ -706,7 +708,7 @@ function Dashboard() {
                 {monthlyContrib > 0 ? "Assumes continued employment + contributions." : "No contributions (laid off / FIRE). Growth only."}
               </div>
 
-              <ProjectionRow label="Coast FIRE" months={projections.p500} target={500000} color="#2563eb" />
+              <ProjectionRow label="Lean FIRE" months={projections.p500} target={500000} color="#2563eb" />
               <ProjectionRow label="Aggressive FIRE" months={projections.aggressive} target={FIRE_TARGETS.aggressive} color="#d97706" />
               <ProjectionRow label="Recommended FIRE (3.5% SWR)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
               <ProjectionRow label="Bulletproof FIRE" months={projections.bulletproof} target={FIRE_TARGETS.bulletproof} color="#8b5cf6" />
@@ -767,7 +769,7 @@ function Dashboard() {
         )}
 
         <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
-          Joseph Harari · U15566654 · Bulgarian Tax Resident · FIRE Target €625k (3.5% SWR on €22k base) · Last framework revision: April 2026
+          Joseph Harari · U15566654 · Bulgarian Tax Resident · FIRE Target €625k (3.5% withdrawal rate on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR" })}/yr) · Last framework revision: April 2026
           <br/>State auto-saves. Update portfolio value monthly.
         </div>
       </div>
