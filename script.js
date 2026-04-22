@@ -1,4 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
+const version = 1.00
 
 // ─── UTILS ───
 function useWindowSize() {
@@ -265,6 +266,7 @@ function Dashboard() {
 
   // Capital Levers
   const [buildCost, setBuildCost] = useState(250000);
+  const [apartmentRent, setApartmentRent] = useState(10800); // <-- ADD THIS
   const [resortCost, setResortCost] = useState(100000);
 
   const [bgTax10, setBgTax10] = useState(false);
@@ -308,6 +310,7 @@ function Dashboard() {
         if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
         if (s.resortFees !== undefined) setResortFees(s.resortFees);
         if (s.buildCost !== undefined) setBuildCost(s.buildCost);
+        if (s.apartmentRent !== undefined) setApartmentRent(s.apartmentRent);
         if (s.resortCost !== undefined) setResortCost(s.resortCost);
         if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
         if (s.realReturn !== undefined) setRealReturn(s.realReturn);
@@ -322,16 +325,18 @@ function Dashboard() {
       saveState({ 
         portfolio, phase, monthlyContrib, annualExpense, wifeIncome, 
         schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, 
+        apartmentRent,
         resortCost, bgTax10, realReturn 
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, resortCost, bgTax10, realReturn]);
+  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn]);
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
-  // ─── OPTION MATRICES ───
+// ─── OPTION MATRICES ───
+  // 1. Plovdiv Status Quo
   const plovGross = annualExpense + antiAtrophy + schoolCost;
   const plovIncomeOffset = wifeIncome * 12;
   const plovNetDraw = Math.max(0, plovGross - plovIncomeOffset);
@@ -339,22 +344,30 @@ function Dashboard() {
   const plovTotal = plovNetDraw + plovTaxDrag;
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
-  const buildRental = 10800;
+  // Rental Income Net (after 9% effective BG flat tax)
+  const netApartmentRent = apartmentRent * 0.91;
+
+  // 2. Asenovgrad Build
   const buildCapital = portfolio - buildCost;
-  const buildNetDraw = Math.max(0, plovTotal - buildRental);
+  const buildNetDraw = Math.max(0, plovTotal - netApartmentRent);
   const buildSWR = buildCapital > 0 ? (buildNetDraw / buildCapital) * 100 : 0;
 
+  // 3. Resort Apartment
   const resortCapital = portfolio - resortCost;
   const resortNetDraw = plovTotal + resortFees;
   const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
 
+  // 4. Flexible Travel
   const travelNetDraw = plovTotal + travelBudget;
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
+  // 5. Valencia Relocation
   const valBase = 36000;
-  const valTotal = valBase + schoolCost;
+  // Valencia benefits from wife's remote income AND net rental income from Plovdiv
+  const valTotal = Math.max(0, valBase + schoolCost - plovIncomeOffset - netApartmentRent);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
+  // Runway (Anchored to Plovdiv default layoff scenario)
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
   const termEur = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
   const cashEur = Math.round(portfolio * phaseData.buckets.cash.target / 100);
@@ -422,7 +435,7 @@ function Dashboard() {
             Financial Command Center
           </h1>
           <p style={{ fontSize: 12, color: "#555", margin: "4px 0 0" }}>
-            State persists between sessions. Update portfolio value monthly after checking IBKR.
+            Version ${version}. State persists between sessions. Update portfolio value monthly after checking IBKR.
           </p>
         </div>
 
@@ -531,7 +544,8 @@ function Dashboard() {
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
                 <Slider label="Liquid Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
                 <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
-                <Slider label="Extra Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
+                <Slider label="Extra Work Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#2563eb" format={v => `€${v}`} suffix="/mo" />
+                <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
                 <div style={{ height: 1, background: "#222", margin: "16px 0" }} />
                 <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />
                 <Slider label="Resort Apartment Cost" value={resortCost} onChange={setResortCost} min={50000} max={200000} step={5000} color="#059669" format={v => `€${v.toLocaleString()}`} />
@@ -598,12 +612,16 @@ function Dashboard() {
                 </div>
 
                 {/* ASENOVGRAD */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: buildCapital < 200000 ? "1px solid #7f1d1d" : "1px solid #222" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, buildCapital).toLocaleString()} Draw: €{buildNetDraw.toLocaleString()}/yr (after rental)</div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Concentrates capital risk. Extreme construction stress. Exacerbates rural isolation.</div>
+                      <div style={{ fontSize: 11, color: buildCapital < 200000 ? "#fca5a5" : "#888", marginTop: 4, fontWeight: buildCapital < 200000 ? 700 : 400 }}>
+                        Liquid Base: €{Math.max(0, buildCapital).toLocaleString()} {buildCapital < 200000 && "(DANGEROUS FRAGILITY)"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>
+                        Net draw: €{buildNetDraw.toLocaleString()}/yr. SWR ignores extreme execution stress, budget overruns, and 100% occupancy risk.
+                      </div>
                     </div>
                     <SWRBadge swr={buildSWR} size="small" />
                   </div>
