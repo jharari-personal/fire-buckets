@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const version = 1.00
+const APP_VERSION = "1.0.4"; // Using a string to preserve formatting
 
 // ─── UTILS ───
 function useWindowSize() {
@@ -149,12 +149,12 @@ function SWRBadge({ swr, size = "large" }) {
   const flashStyle = useFlash(swr, "text");
   let bg, label;
   
-  if (swr <= 0) { bg = "#555"; label = "INVALID"; }
+  if (swr <= 0) { bg = "#059669"; label = "COVERED"; }
   else if (swr > 6.0) { bg = "#991b1b"; label = "CATASTROPHIC"; }
   else if (swr > 5.0) { bg = "#dc2626"; label = "DANGER"; }
   else if (swr > 4.0) { bg = "#d97706"; label = "ELEVATED"; }
-  else if (swr > 3.5) { bg = "#2563eb"; label = "TARGET"; }
-  else { bg = "#059669"; label = "SAFE"; }
+  else if (swr > 3.5) { bg = "#059669"; label = "TARGET"; }
+  else { bg = "#2563eb"; label = "SAFE"; }
   
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isLg ? "flex-end" : "flex-start", gap: 2 }}>
@@ -336,12 +336,18 @@ function Dashboard() {
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
 // ─── OPTION MATRICES ───
-  // 1. Plovdiv Status Quo
   const plovGross = annualExpense + antiAtrophy + schoolCost;
   const plovIncomeOffset = wifeIncome * 12;
-  const plovNetDraw = Math.max(0, plovGross - plovIncomeOffset);
-  const plovTaxDrag = bgTax10 ? plovNetDraw * 0.5 * 0.10 : 0;
-  const plovTotal = plovNetDraw + plovTaxDrag;
+
+  // Helper function to dynamically scale the 10% BG tax drag based on actual withdrawal needs
+  const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
+    const netDraw = Math.max(0, grossExpense - plovIncomeOffset - additionalIncome);
+    const taxDrag = bgTax10 ? netDraw * 0.5 * 0.10 : 0;
+    return netDraw + taxDrag;
+  };
+
+  // 1. Plovdiv Status Quo
+  const plovTotal = calcDrawWithTax(plovGross);
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
   // Rental Income Net (after 9% effective BG flat tax)
@@ -349,21 +355,21 @@ function Dashboard() {
 
   // 2. Asenovgrad Build
   const buildCapital = portfolio - buildCost;
-  const buildNetDraw = Math.max(0, plovTotal - netApartmentRent);
+  const buildNetDraw = calcDrawWithTax(plovGross, netApartmentRent); // Rent reduces withdrawal, which lowers tax drag
   const buildSWR = buildCapital > 0 ? (buildNetDraw / buildCapital) * 100 : 0;
 
   // 3. Resort Apartment
   const resortCapital = portfolio - resortCost;
-  const resortNetDraw = plovTotal + resortFees;
+  const resortNetDraw = calcDrawWithTax(plovGross + resortFees); // Fees increase withdrawal, which raises tax drag
   const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
 
   // 4. Flexible Travel
-  const travelNetDraw = plovTotal + travelBudget;
+  const travelNetDraw = calcDrawWithTax(plovGross + travelBudget);
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
   // 5. Valencia Relocation
   const valBase = 36000;
-  // Valencia benefits from wife's remote income AND net rental income from Plovdiv
+  // Valencia benefits from wife's remote income AND net rental income, but has NO BG tax drag (Beckham Law)
   const valTotal = Math.max(0, valBase + schoolCost - plovIncomeOffset - netApartmentRent);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
@@ -405,8 +411,7 @@ function Dashboard() {
   const mosFlash = useFlash(projections.recommended, "text");
 
   // Determine when to flash the tabs by hashing their dependency variables
-  const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}`;
-  const allocHash = `${phase}-${portfolio}`;
+  const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}-${apartmentRent}`;  const allocHash = `${phase}-${portfolio}`;
   const projHash = `${portfolio}-${monthlyContrib}-${realReturn}`;
 
   const runTabFlash = useFlash(runHash, "tab");
@@ -435,7 +440,7 @@ function Dashboard() {
             Financial Command Center
           </h1>
           <p style={{ fontSize: 12, color: "#555", margin: "4px 0 0" }}>
-            Version ${version}. State persists between sessions. Update portfolio value monthly after checking IBKR.
+            State persists between sessions. Update portfolio value monthly after checking IBKR.
           </p>
         </div>
 
@@ -588,8 +593,10 @@ function Dashboard() {
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 
                 {/* STATUS QUO */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${bgTax10 ? "#7f1d1d44" : "#222"}` }}>
+                {/* Highlights dark red if SWR exceeds 4.0% */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: plovSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    {/* ... inner content remains the same ... */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>1. Plovdiv Status Quo</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{plovTotal.toLocaleString()}/yr</div>
@@ -600,8 +607,10 @@ function Dashboard() {
                 </div>
 
                 {/* VALENCIA */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #1e3a8a" }}>
+                {/* Valencia gets a subtle blue border to signify the Beckham Law, turns red if SWR > 4.0% */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: valSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #1e3a8a" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    {/* ... inner content remains the same ... */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>2. Valencia Relocation</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr <span style={{ color: "#2563eb", fontWeight: 700 }}>Beckham Law</span></div>
@@ -612,8 +621,10 @@ function Dashboard() {
                 </div>
 
                 {/* ASENOVGRAD */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: buildCapital < 200000 ? "1px solid #7f1d1d" : "1px solid #222" }}>
+                {/* Turns bright red if capital collapses, dark red if SWR > 4.0%, otherwise neutral */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: buildCapital < 200000 ? "1px solid #dc2626" : buildSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    {/* ... inner content remains the same ... */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
                       <div style={{ fontSize: 11, color: buildCapital < 200000 ? "#fca5a5" : "#888", marginTop: 4, fontWeight: buildCapital < 200000 ? 700 : 400 }}>
@@ -628,8 +639,10 @@ function Dashboard() {
                 </div>
 
                 {/* RESORT */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                {/* Added matching SWR logic */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: resortSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    {/* ... inner content remains the same ... */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>4. Resort Apartment</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, resortCapital).toLocaleString()}</div>
@@ -640,8 +653,10 @@ function Dashboard() {
                 </div>
 
                 {/* FLEXIBLE TRAVEL */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: "1px solid #222" }}>
+                {/* Added matching SWR logic */}
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: travelSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    {/* ... inner content remains the same ... */}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>5. Flexible Travel</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{travelNetDraw.toLocaleString()}/yr</div>
@@ -787,7 +802,7 @@ function Dashboard() {
         )}
 
         <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
-          Joseph Harari · U15566654 · Bulgarian Tax Resident · FIRE Target €625k (3.5% withdrawal rate on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR" })}/yr) · Last framework revision: April 2026
+          Joseph Harari · U15566654 · v{APP_VERSION} · Bulgarian Tax Resident · FIRE Target €625k (3.5% withdrawal rate on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR" })}/yr) · Last framework revision: April 2026
           <br/>State auto-saves. Update portfolio value monthly.
         </div>
       </div>

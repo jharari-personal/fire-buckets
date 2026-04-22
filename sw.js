@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fcc-cache-v6';
+const CACHE_NAME = `fcc-cache-${APP_VERSION}`;
 
 // Use absolute paths tied specifically to your GH Pages repository
 const ASSETS = [
