@@ -1,7 +1,16 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "1.0.4"; // Using a string to preserve formatting
+const APP_VERSION = "20260422.2"; // Using a string to preserve formatting
 
 // ─── UTILS ───
+const getSWRTheme = (swr) => {
+  if (swr <= 0) return { color: "#059669", label: "COVERED" };
+  if (swr > 6.0) return { color: "#991b1b", label: "CATASTROPHIC" };
+  if (swr > 5.0) return { color: "#dc2626", label: "DANGER" };
+  if (swr > 4.0) return { color: "#d97706", label: "ELEVATED" };
+  if (swr > 3.5) return { color: "#059669", label: "TARGET" };
+  return { color: "#2563eb", label: "SAFE" };
+};
+
 function useWindowSize() {
   const [windowSize, setWindowSize] = useState({
     width: window.innerWidth,
@@ -147,21 +156,22 @@ function Num({ children, color = "#fff", size = 20, mono = true }) {
 function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
   const flashStyle = useFlash(swr, "text");
-  let bg, label;
-  
-  if (swr <= 0) { bg = "#059669"; label = "COVERED"; }
-  else if (swr > 6.0) { bg = "#991b1b"; label = "CATASTROPHIC"; }
-  else if (swr > 5.0) { bg = "#dc2626"; label = "DANGER"; }
-  else if (swr > 4.0) { bg = "#d97706"; label = "ELEVATED"; }
-  else if (swr > 3.5) { bg = "#059669"; label = "TARGET"; }
-  else { bg = "#2563eb"; label = "SAFE"; }
+  const { color, label } = getSWRTheme(swr);
   
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isLg ? "flex-end" : "flex-start", gap: 2 }}>
-      <span style={{ fontSize: isLg ? 28 : 20, fontWeight: 800, color: flashStyle.color || bg, fontFamily: "monospace", lineHeight: 1, transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>
-        {swr > 0 ? `${swr.toFixed(2)}%` : "N/A"}
+      <span style={{ 
+        fontSize: isLg ? 28 : 20, 
+        fontWeight: 800, 
+        color: flashStyle.color || color, 
+        fontFamily: "monospace", 
+        lineHeight: 1, 
+        transition: flashStyle.transition, 
+        textShadow: flashStyle.textShadow 
+      }}>
+        {swr > 0 ? `${swr.toFixed(2)}%` : "0.00%"}
       </span>
-      <span style={{ fontSize: 9, color: bg, fontWeight: 700, letterSpacing: "0.1em" }}>{label}</span>
+      <span style={{ fontSize: 9, color, fontWeight: 700, letterSpacing: "0.1em" }}>{label}</span>
     </div>
   );
 }
@@ -594,9 +604,8 @@ function Dashboard() {
                 
                 {/* STATUS QUO */}
                 {/* Highlights dark red if SWR exceeds 4.0% */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: plovSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    {/* ... inner content remains the same ... */}
+                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(plovSWR).color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>1. Plovdiv Status Quo</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{plovTotal.toLocaleString()}/yr</div>
@@ -608,7 +617,7 @@ function Dashboard() {
 
                 {/* VALENCIA */}
                 {/* Valencia gets a subtle blue border to signify the Beckham Law, turns red if SWR > 4.0% */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: valSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #1e3a8a" }}>
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(valSWR).color}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     {/* ... inner content remains the same ... */}
                     <div>
@@ -622,7 +631,7 @@ function Dashboard() {
 
                 {/* ASENOVGRAD */}
                 {/* Turns bright red if capital collapses, dark red if SWR > 4.0%, otherwise neutral */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: buildCapital < 200000 ? "1px solid #dc2626" : buildSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(buildSWR).color}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     {/* ... inner content remains the same ... */}
                     <div>
@@ -640,7 +649,7 @@ function Dashboard() {
 
                 {/* RESORT */}
                 {/* Added matching SWR logic */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: resortSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(resortSWR).color}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     {/* ... inner content remains the same ... */}
                     <div>
@@ -654,7 +663,7 @@ function Dashboard() {
 
                 {/* FLEXIBLE TRAVEL */}
                 {/* Added matching SWR logic */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: travelSWR > 4.0 ? "1px solid #7f1d1d" : "1px solid #222" }}>
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(travelSWR).color}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     {/* ... inner content remains the same ... */}
                     <div>
