@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260422.3"; // Using a string to preserve formatting
+const APP_VERSION = "20260427.1";
 
 // ─── UTILS ───
 const getSWRTheme = (swr) => {
@@ -285,6 +285,22 @@ function Dashboard() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("runway");
 
+  // ─── SITUATION FLAGS ───
+  // Controls which sliders and scenario cards are visible.
+  // Effective values (effectiveX) gate the flags into calculations so hidden items don't pollute the numbers.
+  const [flags, setFlags] = useState({
+    employed:        true,   // Monthly Contributions slider
+    extraIncome:     false,  // Side Work Income slider
+    apartmentRental: false,  // Plovdiv Apt Rental Yield slider
+    funBudget:       true,   // Extra Fun Budget slider
+    travelBudget:    false,  // Extra Travel Budget slider + Flexible Travel scenario
+    privateSchool:   false,  // Private School Cost slider
+    asenovgrad:      false,  // Asenovgrad Build Cost slider + scenario #3
+    resort:          false,  // Resort Apartment Cost + Maintenance sliders + scenario #4
+    valencia:        false,  // Valencia Relocation scenario #2
+  });
+  const toggleFlag = useCallback((key) => setFlags(f => ({ ...f, [key]: !f[key] })), []);
+
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
   useEffect(() => {
@@ -324,6 +340,7 @@ function Dashboard() {
         if (s.resortCost !== undefined) setResortCost(s.resortCost);
         if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
         if (s.realReturn !== undefined) setRealReturn(s.realReturn);
+        if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
       }
       setLoaded(true);
     })();
@@ -332,22 +349,29 @@ function Dashboard() {
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      saveState({ 
-        portfolio, phase, monthlyContrib, annualExpense, wifeIncome, 
-        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, 
-        apartmentRent,
-        resortCost, bgTax10, realReturn 
+      saveState({
+        portfolio, phase, monthlyContrib, annualExpense, wifeIncome,
+        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
+        apartmentRent, resortCost, bgTax10, realReturn, flags
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn]);
+  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags]);
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
+  // ─── EFFECTIVE VALUES (flags gate what flows into calculations) ───
+  const effectiveMonthlyContrib = flags.employed        ? monthlyContrib  : 0;
+  const effectiveWifeIncome     = flags.extraIncome     ? wifeIncome      : 0;
+  const effectiveApartmentRent  = flags.apartmentRental ? apartmentRent   : 0;
+  const effectiveAntiAtrophy    = flags.funBudget       ? antiAtrophy     : 0;
+  const effectiveTravelBudget   = flags.travelBudget    ? travelBudget    : 0;
+  const effectiveSchoolCost     = flags.privateSchool   ? schoolCost      : 0;
+
 // ─── OPTION MATRICES ───
-  const plovGross = annualExpense + antiAtrophy + schoolCost;
-  const plovIncomeOffset = wifeIncome * 12;
+  const plovGross = annualExpense + effectiveAntiAtrophy + effectiveSchoolCost;
+  const plovIncomeOffset = effectiveWifeIncome * 12;
 
   // Helper function to dynamically scale the 10% BG tax drag based on actual withdrawal needs
   const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
@@ -361,7 +385,7 @@ function Dashboard() {
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
   // Rental Income Net (after 9% effective BG flat tax)
-  const netApartmentRent = apartmentRent * 0.91;
+  const netApartmentRent = effectiveApartmentRent * 0.91;
 
   // 2. Asenovgrad Build
   const buildCapital = portfolio - buildCost;
@@ -374,13 +398,13 @@ function Dashboard() {
   const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
 
   // 4. Flexible Travel
-  const travelNetDraw = calcDrawWithTax(plovGross + travelBudget);
+  const travelNetDraw = calcDrawWithTax(plovGross + effectiveTravelBudget);
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
   // 5. Valencia Relocation
   const valBase = 36000;
   // Valencia benefits from wife's remote income AND net rental income, but has NO BG tax drag (Beckham Law)
-  const valTotal = Math.max(0, valBase + schoolCost - plovIncomeOffset - netApartmentRent);
+  const valTotal = Math.max(0, valBase + effectiveSchoolCost - plovIncomeOffset - netApartmentRent);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
   // Runway (Anchored to Plovdiv default layoff scenario)
@@ -393,13 +417,13 @@ function Dashboard() {
   const monthsTo = useCallback((target) => {
     if (portfolio >= target) return null;
     const r = realReturn / 100 / 12;
-    const c = monthlyContrib;
+    const c = effectiveMonthlyContrib;
     for (let n = 1; n <= 360; n++) {
       const fv = portfolio * Math.pow(1 + r, n) + c * (Math.pow(1 + r, n) - 1) / (r || 0.0001);
       if (fv >= target) return n;
     }
     return 360;
-  }, [portfolio, realReturn, monthlyContrib]);
+  }, [portfolio, realReturn, effectiveMonthlyContrib]);
 
   const projections = useMemo(() => ({
     p500: monthsTo(500000),
@@ -521,9 +545,52 @@ function Dashboard() {
           ))}
         </div>
 
+        {/* ACTIVE SITUATION FLAGS */}
+        <div style={{ background: "#0d0d0d", border: "1px solid #1a1a1a", borderRadius: 8, padding: "12px 14px", marginBottom: 20 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#444", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "monospace", marginBottom: 10 }}>
+            Active Situation — toggle to show/hide relevant sliders and scenarios
+          </div>
+          {[
+            { label: "Income",    color: "#2563eb", items: [
+              { key: "employed",        label: "Employed"      },
+              { key: "extraIncome",     label: "Extra Income"  },
+              { key: "apartmentRental", label: "Apt Rental"    },
+            ]},
+            { label: "Spending",  color: "#ef4444", items: [
+              { key: "funBudget",     label: "Fun Budget"      },
+              { key: "travelBudget",  label: "Travel"          },
+              { key: "privateSchool", label: "Private School"  },
+            ]},
+            { label: "Scenarios", color: "#8b5cf6", items: [
+              { key: "asenovgrad", label: "Asenovgrad Build" },
+              { key: "resort",     label: "Resort Apt"      },
+              { key: "valencia",   label: "Valencia"        },
+            ]},
+          ].map(({ label, color, items }) => (
+            <div key={label} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#333", textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "monospace", width: 58, flexShrink: 0 }}>{label}</span>
+              {items.map(({ key, label: lbl }) => {
+                const on = flags[key];
+                return (
+                  <button key={key} onClick={() => toggleFlag(key)} style={{
+                    padding: "4px 11px", borderRadius: 20, cursor: "pointer", fontFamily: "inherit",
+                    border: on ? `1px solid ${color}60` : "1px solid #1e1e1e",
+                    background: on ? `${color}1a` : "transparent",
+                    color: on ? "#ccc" : "#444",
+                    fontSize: 11, fontWeight: on ? 600 : 400,
+                    transition: "all 0.12s",
+                  }}>
+                    <span style={{ fontSize: 8, marginRight: 5, opacity: on ? 1 : 0.3 }}>{on ? "●" : "○"}</span>{lbl}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
         {/* TAB SWITCHER */}
-        <div style={{ 
-          display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222", 
+        <div style={{
+          display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222",
           overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
         }}>
           {[
@@ -558,32 +625,35 @@ function Dashboard() {
               <Card highlight>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
                 <Slider label="IBKR Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
-                <Slider label="Monthly IBKR Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
-                <Slider label="Side Work Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />
-                <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <div style={{ height: 1, background: "#222", margin: "16px 0" }} />
-                <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />
-                <Slider label="Resort Apartment Cost" value={resortCost} onChange={setResortCost} min={50000} max={200000} step={5000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />
+                {flags.employed        && <Slider label="Monthly IBKR Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />}
+                {flags.extraIncome     && <Slider label="Side Work Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />}
+                {flags.apartmentRental && <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
+                {(flags.asenovgrad || flags.resort) && <div style={{ height: 1, background: "#222", margin: "16px 0" }} />}
+                {flags.asenovgrad      && <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />}
+                {flags.resort          && <Slider label="Resort Apartment Cost" value={resortCost} onChange={setResortCost} min={50000} max={200000} step={5000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />}
               </Card>
 
               <Card highlight>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Expense Levers</h3>
                 <Slider label="Regular Budget" value={annualExpense} onChange={setAnnualExpense} min={15000} max={35000} step={1000} color="#ef4444" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Extra Fun Budget" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Extra Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Second Home Maintenance" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
-                  <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                    <strong style={{ color: "#ccc" }}>Fun Budget:</strong> Clothes, Entertainment, Hobbies, Beauty, etc
+                {flags.funBudget      && <Slider label="Extra Fun Budget" value={antiAtrophy} onChange={setAntiAtrophy} min={0} max={15000} step={500} color="#8b5cf6" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
+                {flags.travelBudget   && <Slider label="Extra Travel Budget" value={travelBudget} onChange={setTravelBudget} min={0} max={15000} step={500} color="#ec4899" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
+                {flags.resort         && <Slider label="Second Home Maintenance" value={resortFees} onChange={setResortFees} min={0} max={3000} step={100} color="#d97706" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
+                {flags.privateSchool  && <Slider label="Private School Cost" value={schoolCost} onChange={setSchoolCost} min={0} max={15000} step={1000} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
+                {flags.funBudget && (
+                  <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #8b5cf6" }}>
+                    <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                      <strong style={{ color: "#ccc" }}>Fun Budget:</strong> Clothes, Entertainment, Hobbies, Beauty, etc
+                    </div>
                   </div>
-                </div>
-                <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #ec4899" }}>
-                  <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
-                    <strong style={{ color: "#ccc" }}>Travel Budget:</strong> Additional travelling budget, on top of the regular budget. Can be moved up or down depending on circumstances.
+                )}
+                {flags.travelBudget && (
+                  <div style={{ marginTop: 8, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #ec4899" }}>
+                    <div style={{ fontSize: 11, color: "#aaa", lineHeight: 1.5 }}>
+                      <strong style={{ color: "#ccc" }}>Travel Budget:</strong> Additional travelling budget, on top of the regular budget.
+                    </div>
                   </div>
-                </div>
-
+                )}
               </Card>
             </div>
 
@@ -615,65 +685,65 @@ function Dashboard() {
                   </div>
                 </div>
 
-                {/* VALENCIA */}
-                {/* Valencia gets a subtle blue border to signify the Beckham Law, turns red if SWR > 4.0% */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(valSWR).color}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    {/* ... inner content remains the same ... */}
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>2. Valencia Relocation</div>
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr <span style={{ color: "#2563eb", fontWeight: 700 }}>Beckham Law</span></div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>The structural endgame. Requires qualifying Spanish contract first to shield equity portfolio.</div>
-                    </div>
-                    <SWRBadge swr={valSWR} size="small" />
-                  </div>
-                </div>
-
-                {/* ASENOVGRAD */}
-                {/* Turns bright red if capital collapses, dark red if SWR > 4.0%, otherwise neutral */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(buildSWR).color}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    {/* ... inner content remains the same ... */}
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
-                      <div style={{ fontSize: 11, color: buildCapital < 200000 ? "#fca5a5" : "#888", marginTop: 4, fontWeight: buildCapital < 200000 ? 700 : 400 }}>
-                        Liquid Base: €{Math.max(0, buildCapital).toLocaleString()} {buildCapital < 200000 && "(DANGEROUS FRAGILITY)"}
+                {/* VALENCIA — shown only when valencia flag is on */}
+                {flags.valencia && (
+                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(valSWR).color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>2. Valencia Relocation</div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{valTotal.toLocaleString()}/yr <span style={{ color: "#2563eb", fontWeight: 700 }}>Beckham Law</span></div>
+                        <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>The structural endgame. Requires qualifying Spanish contract first to shield equity portfolio.</div>
                       </div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>
-                        Net draw: €{buildNetDraw.toLocaleString()}/yr. SWR ignores extreme execution stress, budget overruns, and 100% occupancy risk.
+                      <SWRBadge swr={valSWR} size="small" />
+                    </div>
+                  </div>
+                )}
+
+                {/* ASENOVGRAD — shown only when asenovgrad flag is on */}
+                {flags.asenovgrad && (
+                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(buildSWR).color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>3. Asenovgrad Build</div>
+                        <div style={{ fontSize: 11, color: buildCapital < 200000 ? "#fca5a5" : "#888", marginTop: 4, fontWeight: buildCapital < 200000 ? 700 : 400 }}>
+                          Liquid Base: €{Math.max(0, buildCapital).toLocaleString()} {buildCapital < 200000 && "(DANGEROUS FRAGILITY)"}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>
+                          Net draw: €{buildNetDraw.toLocaleString()}/yr. SWR ignores execution stress, budget overruns, and 100% occupancy risk.
+                        </div>
                       </div>
+                      <SWRBadge swr={buildSWR} size="small" />
                     </div>
-                    <SWRBadge swr={buildSWR} size="small" />
                   </div>
-                </div>
+                )}
 
-                {/* RESORT */}
-                {/* Added matching SWR logic */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(resortSWR).color}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    {/* ... inner content remains the same ... */}
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>4. Resort Apartment</div>
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, resortCapital).toLocaleString()}</div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>High logistical friction (packing/driving). Off-season boredom (Pamporovo) or toxic smog (Velingrad).</div>
+                {/* RESORT — shown only when resort flag is on */}
+                {flags.resort && (
+                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(resortSWR).color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>4. Resort Apartment</div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Capital Base: €{Math.max(0, resortCapital).toLocaleString()}</div>
+                        <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>High logistical friction (packing/driving). Off-season boredom (Pamporovo) or toxic smog (Velingrad).</div>
+                      </div>
+                      <SWRBadge swr={resortSWR} size="small" />
                     </div>
-                    <SWRBadge swr={resortSWR} size="small" />
                   </div>
-                </div>
+                )}
 
-                {/* FLEXIBLE TRAVEL */}
-                {/* Added matching SWR logic */}
-                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border:`1px solid ${getSWRTheme(travelSWR).color}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    {/* ... inner content remains the same ... */}
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>5. Flexible Travel</div>
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{travelNetDraw.toLocaleString()}/yr</div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Financially optimal. High chaos and transient lifestyle. Fails to build permanent local community.</div>
+                {/* FLEXIBLE TRAVEL — shown only when travelBudget flag is on */}
+                {flags.travelBudget && (
+                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(travelSWR).color}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>5. Flexible Travel</div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{travelNetDraw.toLocaleString()}/yr</div>
+                        <div style={{ fontSize: 10, color: "#555", marginTop: 4, lineHeight: 1.4 }}>Financially optimal. High chaos and transient lifestyle. Fails to build permanent local community.</div>
+                      </div>
+                      <SWRBadge swr={travelSWR} size="small" />
                     </div>
-                    <SWRBadge swr={travelSWR} size="small" />
                   </div>
-                </div>
+                )}
 
               </div>
               
@@ -747,7 +817,7 @@ function Dashboard() {
             <Card>
               <h3 style={{ fontSize: 13, fontWeight: 700, color: "#fff", margin: "0 0 12px" }}>Time to FIRE Milestones</h3>
               <div style={{ fontSize: 10, color: "#555", marginBottom: 12 }}>
-                {monthlyContrib > 0 ? "Assumes continued employment + contributions." : "No contributions (laid off / FIRE). Growth only."}
+                {effectiveMonthlyContrib > 0 ? `Assumes €${effectiveMonthlyContrib.toLocaleString()}/mo contributions (Employed flag is on).` : "No contributions — Employed flag is off. Portfolio growth only."}
               </div>
 
               <ProjectionRow label="Lean FIRE" months={projections.p500} target={500000} color="#2563eb" />
