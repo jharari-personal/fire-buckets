@@ -10,36 +10,47 @@ A single-user personal financial planning PWA (Progressive Web App) for managing
 
 Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so static files are served as-is.
 
-**After any change, bump `APP_VERSION`** in `script.js` (format: `YYYYMMDD.N`, e.g. `"20260424.1"`). This invalidates the service worker cache so users get the updated files immediately.
+**After any change, bump `APP_VERSION`** in `script.js` (format: `YYYYMMDD.N`, e.g. `"20260504.1"`). This invalidates the service worker cache so users get the updated files immediately.
 
 ## Architecture
 
-All logic lives in `script.js`. The file is structured in three layers:
+All logic lives in `script.js`. The file is structured in four layers:
 
 ### 1. Constants & Configuration (top of file)
+- `GK_CONFIG` — Guyton-Klinger parameters: `IWR` 4.0%, `UPPER_GUARDRAIL` 3.2% (Prosperity), `LOWER_GUARDRAIL` 4.8% (Capital Preservation), `ADJUSTMENT` 10%, `INFLATION_CAP` 6%
 - `FIRE_TARGETS` — portfolio thresholds: aggressive (550k), recommended (625k), bulletproof (700k)
-- `PHASES` — 4 life phases (`employed`, `laid_off`, `coast_fire`, `full_fire`), each with bucket allocation targets and floor amounts
-- `BUCKET_META` — metadata for 4 investment buckets: VWCE (growth), XEON (fortress), 29GA (term shield, matures March 2029), EUR cash at IBKR
-- `TRIGGERS` — 9 event-driven decision rules with urgency levels
+- `PHASES` — 4 life phases (`employed`, `laid_off`, `lean_fire`, `full_fire`), each with bucket allocation targets and floor amounts. `full_fire` floors reflect GK bucket minimums: fortress €44k (B1, 2yr expenses), termShield €110k (B2, 5yr expenses)
+- `BUCKET_META` — metadata for 4 investment buckets: VWCE (growth/B3), XEON (fortress/B1), 29GA (term shield/B2, matures March 2029), EUR cash at IBKR
+- `TRIGGERS` — 10 event-driven decision rules with urgency levels
 - Geographic scenarios: Plovdiv, Valencia (Beckham Law), Asenovgrad Build, Resort Apartment, Flexible Travel
 
 ### 2. Calculation Engine (pure functions)
-- `calcBuckets(portfolio, phase)` — allocates portfolio across 4 buckets; floors override percentages when portfolio is small
-- `calcSWR(state)` — computes Safe Withdrawal Rate for all 5 geographic scenarios; handles Bulgarian 10% CGT drag
-- `calcProjection(state, target)` — months-to-FIRE using compound growth formula; returns `null` if already met, `999` if unreachable in 30 years
-- Runway = fortress + termshield + cash amounts
+- `calcGKNextStep({ portfolio, lastWithdrawal, annualNominalReturn, inflation })` — applies the three GK rules in sequence: (1) Inflation Rule — raise by inflation (capped at 6%), skip entirely if last year's return was negative; (2) Capital Preservation Rule — cut 10% if WR > 4.8%; (3) Prosperity Rule — raise 10% if WR < 3.2%. Returns `{ proposedWithdrawal, finalWithdrawal, trigger, wr }`
+- `runGKSimulation({ startPortfolio, startWithdrawal, nominalReturn, inflation, years })` — projects year-by-year using `calcGKNextStep`; stops early if portfolio depleted. Returns array of row objects
+- `getSWRTheme(swr)` — color/label for withdrawal rate display, using GK thresholds (GK SAFE / ELEVATED / CUT −10% / RAISE +10%)
+- `getGKZoneStyle(wr)` — color/label/bg for GK zone indicators
+- Runway = fortress + termShield + cash amounts divided by monthly burn
 
 ### 3. React Components
 - `Dashboard` — top-level state container and tab router; reads/writes localStorage
 - `BucketRow` — allocation progress bars with floor override indicators
-- `SWRBadge` — color-coded SWR: green ≤3.5%, blue safe, amber elevated, red/dark-red danger
-- `Slider` — generic input for the 14 state variables
+- `SWRBadge` — color-coded withdrawal rate badge using GK thresholds
+- `Slider` — generic input component
 - `ProjectionRow` — FIRE timeline display
 - `useFlash` — 200ms glow animation on value change (skips initial render)
 - `useWindowSize` — responsive breakpoint at 768px
 
+### 4. Tabs
+- **Runway & Levers** — portfolio slider, expense/income sliders, geographic arbitrage scenario cards with GK-labeled SWR badges, situation flags panel
+- **Allocation** — 4-bucket bar with `BucketRow` breakdown; GK 3-Bucket Targets card (B1/B2/B3 with ON TARGET / SHORT / OVER status) shown for `full_fire` and `lean_fire` phases
+- **Projection** — time-to-FIRE milestones + layoff scenario; GK Post-FIRE Sustainability card showing portfolio at years 10/20/30/40/50 from the €625k FIRE target
+- **Withdrawals** — GK rules overview; this-year withdrawal check (last year's return + this year's inflation → recommended withdrawal with trigger); base withdrawal slider; 40-year simulation table; year-by-year withdrawal history log with "Record Year" form
+
 ### State (localStorage key: `"harari-dashboard-state"`)
-14 variables: `portfolio`, `phase`, `monthlyContrib`, `annualExpense`, `wifeIncome`, `schoolCost`, `antiAtrophy`, `travelBudget`, `resortFees`, `buildCost`, `apartmentRent`, `resortCost`, `bgTax10`, `realReturn`
+18 variables: `portfolio`, `phase`, `monthlyContrib`, `annualExpense`, `wifeIncome`, `schoolCost`, `antiAtrophy`, `travelBudget`, `resortFees`, `buildCost`, `apartmentRent`, `resortCost`, `bgTax10`, `realReturn`, `flags`, `gkBaseWithdrawal`, `gkNominalReturn`, `gkInflation`, `gkHistory`
+
+- `gkBaseWithdrawal` — current annual GK withdrawal amount; 0 = defaults to `plovTotal` (current expense level)
+- `gkHistory` — array of year records `{ id, yearLabel, portfolioStart, actualReturn, actualInflation, lastWithdrawal, proposedWithdrawal, trigger, finalWithdrawal, wr, portfolioEnd }`
 
 Auto-saves with 500ms debounce on any change. Graceful degradation if localStorage unavailable.
 
@@ -49,8 +60,9 @@ Cache name uses `APP_VERSION`. Cache-first strategy; on activation, deletes old 
 ## Key Conventions
 
 - All monetary values are **EUR**
-- Real return default: **5%** (≈7-8% nominal minus inflation)
-- SWR target: **3.5%** at the €625k recommended threshold
+- Real return default: **5%** (≈7-8% nominal minus inflation). GK simulation uses nominal return + inflation as separate inputs
+- Withdrawal model: **Guyton-Klinger** with IWR 4.0% at the €625k recommended threshold (replaces static 3.5% SWR)
+- GK guardrails: raise 10% if WR < 3.2%; cut 10% if WR > 4.8%; skip annual inflation raise after a negative-return year
 - Tax: Bulgarian CGT is 0% or 10% (toggled), Spanish Beckham Law = 0% CGT for 6 years
 - No external state management — React `useState` + localStorage only
 - Inline styles throughout (no CSS classes or framework)

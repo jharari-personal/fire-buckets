@@ -1,15 +1,31 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260427.1";
+const APP_VERSION = "20260504.1";
+
+// ─── GK CONFIGURATION ───
+const GK_CONFIG = {
+  IWR: 0.04,
+  UPPER_GUARDRAIL: 0.032,   // Prosperity Rule: WR below this → raise 10%
+  LOWER_GUARDRAIL: 0.048,   // Capital Preservation Rule: WR above this → cut 10%
+  ADJUSTMENT: 0.10,
+  INFLATION_CAP: 0.06,
+};
 
 // ─── UTILS ───
 const getSWRTheme = (swr) => {
   if (swr <= 0) return { color: "#059669", label: "COVERED" };
-  if (swr > 6.0) return { color: "#991b1b", label: "CATASTROPHIC" };
-  if (swr > 5.0) return { color: "#dc2626", label: "DANGER" };
-  if (swr > 4.0) return { color: "#d97706", label: "ELEVATED" };
-  if (swr > 3.5) return { color: "#059669", label: "TARGET" };
-  return { color: "#2563eb", label: "SAFE" };
+  if (swr > 6.0) return { color: "#991b1b", label: "CRITICAL" };
+  if (swr > 5.5) return { color: "#dc2626", label: "DANGER" };
+  if (swr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT −10%" };
+  if (swr > GK_CONFIG.IWR * 100) return { color: "#d97706", label: "ELEVATED" };
+  if (swr > GK_CONFIG.UPPER_GUARDRAIL * 100) return { color: "#059669", label: "GK SAFE" };
+  return { color: "#2563eb", label: "RAISE +10%" };
 };
+
+function getGKZoneStyle(wr) {
+  if (wr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT −10%", bg: "#3a1e1e" };
+  if (wr < GK_CONFIG.UPPER_GUARDRAIL * 100) return { color: "#2563eb", label: "RAISE +10%", bg: "#1e2a3a" };
+  return { color: "#059669", label: "GK SAFE", bg: "#1a2e1a" };
+}
 
 function useWindowSize() {
   const [windowSize, setWindowSize] = useState({
@@ -29,7 +45,6 @@ function useWindowSize() {
 }
 
 // ─── ANIMATION HOOK ───
-// Detects value changes and returns a temporary inline style object to create a "pulse" effect
 function useFlash(value, type = "text", skipInitial = true) {
   const [flash, setFlash] = useState(false);
   const prev = useRef(value);
@@ -43,22 +58,21 @@ function useFlash(value, type = "text", skipInitial = true) {
     }
     if (prev.current !== value) {
       setFlash(true);
-      const t = setTimeout(() => setFlash(false), 200); // Quick active state
+      const t = setTimeout(() => setFlash(false), 200);
       prev.current = value;
       return () => clearTimeout(t);
     }
   }, [value]);
 
-  if (!flash) return { transition: "all 0.8s ease-out" }; // Long fade out
+  if (!flash) return { transition: "all 0.8s ease-out" };
 
   if (type === "tab") return {
     backgroundColor: "rgba(255, 255, 255, 0.2)",
     color: "#fff",
     textShadow: "0 0 8px #fff",
-    transition: "none" // Instant flash
+    transition: "none"
   };
 
-  // Default text flash
   return {
     color: "#fff",
     textShadow: "0 0 10px rgba(255, 255, 255, 0.8)",
@@ -77,8 +91,8 @@ async function loadState() {
 async function saveState(state) {
   try {
     localStorage.setItem("harari-dashboard-state", JSON.stringify(state));
-  } catch (e) { 
-    console.error("Storage save failed:", e); 
+  } catch (e) {
+    console.error("Storage save failed:", e);
   }
 }
 
@@ -111,42 +125,97 @@ const PHASES = {
     icon: "◇", color: "#8b5cf6",
     buckets: {
       growth:     { target: 78, range: [72,82], floor: null,  note: "Multi-provider. Split VWCE / SPYI above €500k." },
-      fortress:   { target: 10, range: [8,12],  floor: 40000, note: "24 months net draw locked in." },
-      termShield: { target: 8,  range: [6,10],  floor: 25000, note: "Years 2–4 bridge. Rolling ladder." },
-      cash:       { target: 4,  range: [2,5],   floor: null,  note: "Opportunity fund — deploy on 15%+ drawdowns." },
+      fortress:   { target: 8,  range: [6,12],  floor: 40000, note: "GK B1 approx — 2yr safety net. Draw first." },
+      termShield: { target: 10, range: [8,14],  floor: 55000, note: "GK B2 partial. Rolling ladder, build toward 5yr target." },
+      cash:       { target: 4,  range: [2,5],   floor: null,  note: "Operating buffer + opportunity fund." },
     },
   },
   full_fire: {
     id: "full_fire", label: "Full FIRE", subtitle: "Living off the portfolio",
     icon: "★", color: "#f59e0b",
     buckets: {
-      growth:     { target: 72, range: [65,78], floor: null,  note: "Multi-provider mandatory. Rebalance annually." },
-      fortress:   { target: 12, range: [10,14], floor: 50000, note: "24–30 months expenses. Non-negotiable floor." },
-      termShield: { target: 10, range: [8,12],  floor: 35000, note: "Years 2–4 rolling ladder." },
-      cash:       { target: 6,  range: [4,8],   floor: null,  note: "3–6 months immediate liquidity + opportunity." },
+      growth:     { target: 72, range: [65,78], floor: null,   note: "Multi-provider mandatory. Rebalance annually. Never sell in drawdowns." },
+      fortress:   { target: 8,  range: [6,12],  floor: 44000,  note: "GK B1 — 2yr expenses. Draw first, refill from B2." },
+      termShield: { target: 16, range: [12,20], floor: 110000, note: "GK B2 — 5yr expenses. Refill B1 when depleted." },
+      cash:       { target: 4,  range: [2,6],   floor: null,   note: "3–6 months immediate liquidity + opportunity." },
     },
   },
 };
 
 const BUCKET_META = {
   growth:     { label: "Growth (VWCE)",  inst: "VWCE", color: "#2563eb", short: "Compounding machine. Never sell in drawdowns." },
-  fortress:   { label: "Safety (XEON)",  inst: "XEON (€STR ~2.3%)",        color: "#059669", short: "Liquidity. Layoff runway years 0–2." },
-  termShield: { label: "Runway (29GA)",    inst: "29GA → successor bond ETF", color: "#d97706", short: "Medium-term runway years 2–4." },
-  cash:       { label: "Cash",  inst: "EUR cash at IBKR",         color: "#6b7280", short: "DCA buffer or opportunity fund." },
+  fortress:   { label: "Safety (XEON)",  inst: "XEON (€STR ~2.3%)",        color: "#059669", short: "GK B1 — 2yr liquidity. Layoff runway years 0–2." },
+  termShield: { label: "Runway (29GA)",  inst: "29GA → successor bond ETF", color: "#d97706", short: "GK B2 — 5yr stability. Refill B1." },
+  cash:       { label: "Cash",           inst: "EUR cash at IBKR",          color: "#6b7280", short: "DCA buffer or opportunity fund." },
 };
 
 const TRIGGERS = [
   { event: "Layoff confirmed", action: "Cancel DCA → route cash to XEON. Switch to Laid Off phase. Do NOT sell VWCE.", urgency: "immediate", category: "employment" },
   { event: "Portfolio hits €500k", action: "Split new DCA: 60% VWCE / 40% SPYI or ISAC for provider diversification.", urgency: "month", category: "milestone" },
-  { event: "Portfolio hits €625k", action: "FIRE-Ready. Fortress floor → €50k. Decide: keep working or transition?", urgency: "month", category: "milestone" },
+  { event: "Portfolio hits €625k", action: "FIRE-Ready. Fortress floor → €44k (GK B1). TermShield → €110k (GK B2). Decide: keep working or transition?", urgency: "month", category: "milestone" },
   { event: "Art. 13 repealed (10% CGT)", action: "April 2026 reset is safe. Activate Beckham Law research → decide within 60 days.", urgency: "quarter", category: "tax" },
   { event: "€STR drops below 1.5%", action: "Review XEON yield. Consider short-dated EUR govt bond ETF alternative.", urgency: "quarter", category: "market" },
   { event: "March 2029 — 29GA dissolution", action: "Sell 29GA on BVME.ETF via directed limit order. Do NOT wait for December.", urgency: "immediate", category: "calendar" },
-  { event: "Market drawdown > 25%", action: "Deploy strategic cash into growth. Do NOT touch fortress or term shield.", urgency: "week", category: "market" },
-  { event: "Daughter starts private school", action: "Add €10–13k/yr to expenses. Recalculate SWR. If > 4.0%, wife's income becomes mandatory.", urgency: "month", category: "life" },
-  { event: "Wife starts earning income", action: "Reduce fortress floor by ~50% of her annual. Accelerate growth. Recalculate FIRE.", urgency: "quarter", category: "life" },
+  { event: "Market drawdown > 25%", action: "Deploy strategic cash into growth. Do NOT touch fortress or term shield. GK: skip inflation raise next year.", urgency: "week", category: "market" },
+  { event: "Daughter starts private school", action: "Add €10–13k/yr to expenses. Recalculate GK IWR. If > 4.8%, apply Capital Preservation cut.", urgency: "month", category: "life" },
+  { event: "Wife starts earning income", action: "Reduce fortress floor by ~50% of her annual. Accelerate growth. Recalculate GK IWR.", urgency: "quarter", category: "life" },
   { event: "New employment in Spain", action: "File Beckham Law (Form 149) within 6 months of entering Spanish Social Security.", urgency: "immediate", category: "relocation" },
 ];
+
+// ─── CALCULATION ENGINE ───
+function calcGKNextStep({ portfolio, lastWithdrawal, annualNominalReturn, inflation }) {
+  // Inflation Rule: skip raise if last year's return was negative
+  let proposedWithdrawal = lastWithdrawal;
+  if (annualNominalReturn >= 0) {
+    const capped = Math.min(inflation, GK_CONFIG.INFLATION_CAP);
+    proposedWithdrawal = lastWithdrawal * (1 + capped);
+  }
+
+  // Guardrail Rules
+  const currentWR = proposedWithdrawal / portfolio;
+  let trigger = null;
+  let finalWithdrawal = proposedWithdrawal;
+
+  if (currentWR > GK_CONFIG.LOWER_GUARDRAIL) {
+    finalWithdrawal = proposedWithdrawal * (1 - GK_CONFIG.ADJUSTMENT);
+    trigger = "CAPITAL_PRESERVATION";
+  } else if (currentWR < GK_CONFIG.UPPER_GUARDRAIL) {
+    finalWithdrawal = proposedWithdrawal * (1 + GK_CONFIG.ADJUSTMENT);
+    trigger = "PROSPERITY";
+  }
+
+  return { proposedWithdrawal, finalWithdrawal, trigger, wr: finalWithdrawal / portfolio };
+}
+
+function runGKSimulation({ startPortfolio, startWithdrawal, nominalReturn, inflation, years = 40 }) {
+  const rows = [];
+  let portfolio = startPortfolio;
+  let withdrawal = startWithdrawal;
+
+  for (let year = 1; year <= years; year++) {
+    const portfolioStart = portfolio;
+    const step = calcGKNextStep({
+      portfolio,
+      lastWithdrawal: withdrawal,
+      annualNominalReturn: nominalReturn,
+      inflation,
+    });
+    const endPortfolio = Math.max(0, (portfolioStart - step.finalWithdrawal) * (1 + nominalReturn));
+    rows.push({
+      year,
+      portfolioStart,
+      proposedWithdrawal: step.proposedWithdrawal,
+      trigger: step.trigger,
+      finalWithdrawal: step.finalWithdrawal,
+      wr: step.wr * 100,
+      portfolioEnd: endPortfolio,
+    });
+    portfolio = endPortfolio;
+    withdrawal = step.finalWithdrawal;
+    if (portfolio <= 0) break;
+  }
+  return rows;
+}
 
 // ─── COMPONENTS ───
 function Num({ children, color = "#fff", size = 20, mono = true }) {
@@ -157,17 +226,17 @@ function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
   const flashStyle = useFlash(swr, "text");
   const { color, label } = getSWRTheme(swr);
-  
+
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isLg ? "flex-end" : "flex-start", gap: 2 }}>
-      <span style={{ 
-        fontSize: isLg ? 28 : 20, 
-        fontWeight: 800, 
-        color: flashStyle.color || color, 
-        fontFamily: "monospace", 
-        lineHeight: 1, 
-        transition: flashStyle.transition, 
-        textShadow: flashStyle.textShadow 
+      <span style={{
+        fontSize: isLg ? 28 : 20,
+        fontWeight: 800,
+        color: flashStyle.color || color,
+        fontFamily: "monospace",
+        lineHeight: 1,
+        transition: flashStyle.transition,
+        textShadow: flashStyle.textShadow
       }}>
         {swr > 0 ? `${swr.toFixed(2)}%` : "0.00%"}
       </span>
@@ -205,7 +274,7 @@ function BucketRow({ bucketKey, alloc, portfolioValue }) {
   const floorActive = alloc.floor && eurVal < alloc.floor;
   const effectiveEur = floorActive ? alloc.floor : eurVal;
   const pct = Math.min((alloc.target / 100) * 100, 100);
-  
+
   const valFlash = useFlash(effectiveEur, "text");
   const pctFlash = useFlash(alloc.target, "text");
 
@@ -241,11 +310,11 @@ function ProjectionRow({ label, months, eurVal, target, color }) {
       <span style={{ fontSize: 12, color: flashStyle.color || "#555", fontFamily: "monospace", transition: flashStyle.transition, textShadow: flashStyle.textShadow }}>Already passed</span>
     </div>
   );
-  
+
   const date = new Date();
   date.setMonth(date.getMonth() + months);
   const dateStr = date.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
-  
+
   return (
     <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #111" }}>
       <span style={{ fontSize: 12, color: "#888" }}>{label} <span style={{ fontSize: 11, color: "#555" }}>€{target.toLocaleString()}</span></span>
@@ -262,9 +331,9 @@ function Dashboard() {
   const { width } = useWindowSize();
   const isMobile = width <= 768;
 
-  const [portfolio, setPortfolio] = useState(470000); 
+  const [portfolio, setPortfolio] = useState(470000);
   const [phase, setPhase] = useState("employed");
-  
+
   // Operating Levers
   const [monthlyContrib, setMonthlyContrib] = useState(6000);
   const [annualExpense, setAnnualExpense] = useState(20000);
@@ -276,7 +345,7 @@ function Dashboard() {
 
   // Capital Levers
   const [buildCost, setBuildCost] = useState(250000);
-  const [apartmentRent, setApartmentRent] = useState(10800); // <-- ADD THIS
+  const [apartmentRent, setApartmentRent] = useState(10800);
   const [resortCost, setResortCost] = useState(100000);
 
   const [bgTax10, setBgTax10] = useState(false);
@@ -286,20 +355,31 @@ function Dashboard() {
   const [tab, setTab] = useState("runway");
 
   // ─── SITUATION FLAGS ───
-  // Controls which sliders and scenario cards are visible.
-  // Effective values (effectiveX) gate the flags into calculations so hidden items don't pollute the numbers.
   const [flags, setFlags] = useState({
-    employed:        true,   // Monthly Contributions slider
-    extraIncome:     false,  // Side Work Income slider
-    apartmentRental: false,  // Plovdiv Apt Rental Yield slider
-    funBudget:       true,   // Extra Fun Budget slider
-    travelBudget:    false,  // Extra Travel Budget slider + Flexible Travel scenario
-    privateSchool:   false,  // Private School Cost slider
-    asenovgrad:      false,  // Asenovgrad Build Cost slider + scenario #3
-    resort:          false,  // Resort Apartment Cost + Maintenance sliders + scenario #4
-    valencia:        false,  // Valencia Relocation scenario #2
+    employed:        true,
+    extraIncome:     false,
+    apartmentRental: false,
+    funBudget:       true,
+    travelBudget:    false,
+    privateSchool:   false,
+    asenovgrad:      false,
+    resort:          false,
+    valencia:        false,
   });
   const toggleFlag = useCallback((key) => setFlags(f => ({ ...f, [key]: !f[key] })), []);
+
+  // ─── GK STATE ───
+  const [gkBaseWithdrawal, setGkBaseWithdrawal] = useState(0);
+  const [gkNominalReturn, setGkNominalReturn] = useState(7.5);
+  const [gkInflation, setGkInflation] = useState(2.5);
+  const [gkHistory, setGkHistory] = useState([]);
+  const [gkLastReturn, setGkLastReturn] = useState(7.5);
+  const [gkThisInflation, setGkThisInflation] = useState(2.5);
+  const [showAddGKEntry, setShowAddGKEntry] = useState(false);
+  const [gkEntryYear, setGkEntryYear] = useState(String(new Date().getFullYear()));
+  const [gkEntryPortfolioStart, setGkEntryPortfolioStart] = useState(0);
+  const [gkEntryReturn, setGkEntryReturn] = useState(7.5);
+  const [gkEntryInflation, setGkEntryInflation] = useState(2.5);
 
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
@@ -316,9 +396,7 @@ function Dashboard() {
     if (deferredPrompt) {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
-        setDeferredPrompt(null);
-      }
+      if (outcome === 'accepted') setDeferredPrompt(null);
     }
   };
 
@@ -341,6 +419,10 @@ function Dashboard() {
         if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
         if (s.realReturn !== undefined) setRealReturn(s.realReturn);
         if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
+        if (s.gkBaseWithdrawal !== undefined) setGkBaseWithdrawal(s.gkBaseWithdrawal);
+        if (s.gkNominalReturn !== undefined) setGkNominalReturn(s.gkNominalReturn);
+        if (s.gkInflation !== undefined) setGkInflation(s.gkInflation);
+        if (s.gkHistory) setGkHistory(s.gkHistory);
       }
       setLoaded(true);
     })();
@@ -352,16 +434,17 @@ function Dashboard() {
       saveState({
         portfolio, phase, monthlyContrib, annualExpense, wifeIncome,
         schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
-        apartmentRent, resortCost, bgTax10, realReturn, flags
+        apartmentRent, resortCost, bgTax10, realReturn, flags,
+        gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags]);
+  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
-  // ─── EFFECTIVE VALUES (flags gate what flows into calculations) ───
+  // ─── EFFECTIVE VALUES ───
   const effectiveMonthlyContrib = flags.employed        ? monthlyContrib  : 0;
   const effectiveWifeIncome     = flags.extraIncome     ? wifeIncome      : 0;
   const effectiveApartmentRent  = flags.apartmentRental ? apartmentRent   : 0;
@@ -369,45 +452,37 @@ function Dashboard() {
   const effectiveTravelBudget   = flags.travelBudget    ? travelBudget    : 0;
   const effectiveSchoolCost     = flags.privateSchool   ? schoolCost      : 0;
 
-// ─── OPTION MATRICES ───
+  // ─── OPTION MATRICES ───
   const plovGross = annualExpense + effectiveAntiAtrophy + effectiveSchoolCost;
   const plovIncomeOffset = effectiveWifeIncome * 12;
 
-  // Helper function to dynamically scale the 10% BG tax drag based on actual withdrawal needs
   const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
     const netDraw = Math.max(0, grossExpense - plovIncomeOffset - additionalIncome);
     const taxDrag = bgTax10 ? netDraw * 0.5 * 0.10 : 0;
     return netDraw + taxDrag;
   };
 
-  // 1. Plovdiv Status Quo
   const plovTotal = calcDrawWithTax(plovGross);
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
-  // Rental Income Net (after 9% effective BG flat tax)
   const netApartmentRent = effectiveApartmentRent * 0.91;
 
-  // 2. Asenovgrad Build
   const buildCapital = portfolio - buildCost;
-  const buildNetDraw = calcDrawWithTax(plovGross, netApartmentRent); // Rent reduces withdrawal, which lowers tax drag
+  const buildNetDraw = calcDrawWithTax(plovGross, netApartmentRent);
   const buildSWR = buildCapital > 0 ? (buildNetDraw / buildCapital) * 100 : 0;
 
-  // 3. Resort Apartment
   const resortCapital = portfolio - resortCost;
-  const resortNetDraw = calcDrawWithTax(plovGross + resortFees); // Fees increase withdrawal, which raises tax drag
+  const resortNetDraw = calcDrawWithTax(plovGross + resortFees);
   const resortSWR = resortCapital > 0 ? (resortNetDraw / resortCapital) * 100 : 0;
 
-  // 4. Flexible Travel
   const travelNetDraw = calcDrawWithTax(plovGross + effectiveTravelBudget);
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
-  // 5. Valencia Relocation
   const valBase = 36000;
-  // Valencia benefits from wife's remote income AND net rental income, but has NO BG tax drag (Beckham Law)
   const valTotal = Math.max(0, valBase + effectiveSchoolCost - plovIncomeOffset - netApartmentRent);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
-  // Runway (Anchored to Plovdiv default layoff scenario)
+  // Runway
   const fortressEur = Math.max(phaseData.buckets.fortress.floor || 0, Math.round(portfolio * phaseData.buckets.fortress.target / 100));
   const termEur = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
   const cashEur = Math.round(portfolio * phaseData.buckets.cash.target / 100);
@@ -435,22 +510,75 @@ function Dashboard() {
   const fireGap = Math.max(0, FIRE_TARGETS.recommended - portfolio);
   const fireProgress = Math.min(100, (portfolio / FIRE_TARGETS.recommended) * 100);
 
+  // ─── GK DERIVED STATE ───
+  const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
+  const currentGKWR = portfolio > 0 ? (effectiveBaseWithdrawal / portfolio) * 100 : 0;
+
+  const currentYearGK = useMemo(() => calcGKNextStep({
+    portfolio,
+    lastWithdrawal: effectiveBaseWithdrawal,
+    annualNominalReturn: gkLastReturn / 100,
+    inflation: gkThisInflation / 100,
+  }), [portfolio, effectiveBaseWithdrawal, gkLastReturn, gkThisInflation]);
+
+  const simRows = useMemo(() => runGKSimulation({
+    startPortfolio: portfolio,
+    startWithdrawal: effectiveBaseWithdrawal,
+    nominalReturn: gkNominalReturn / 100,
+    inflation: gkInflation / 100,
+    years: 40,
+  }), [portfolio, effectiveBaseWithdrawal, gkNominalReturn, gkInflation]);
+
+  // Last history entry's withdrawal (for add-entry calc)
+  const lastHistoryWithdrawal = gkHistory.length > 0
+    ? gkHistory[gkHistory.length - 1].finalWithdrawal
+    : effectiveBaseWithdrawal;
+
+  const addGKHistoryEntry = () => {
+    const gk = calcGKNextStep({
+      portfolio: gkEntryPortfolioStart,
+      lastWithdrawal: lastHistoryWithdrawal,
+      annualNominalReturn: gkEntryReturn / 100,
+      inflation: gkEntryInflation / 100,
+    });
+    const entry = {
+      id: Date.now(),
+      yearLabel: gkEntryYear,
+      portfolioStart: gkEntryPortfolioStart,
+      actualReturn: gkEntryReturn,
+      actualInflation: gkEntryInflation,
+      lastWithdrawal: lastHistoryWithdrawal,
+      proposedWithdrawal: gk.proposedWithdrawal,
+      trigger: gk.trigger,
+      finalWithdrawal: gk.finalWithdrawal,
+      wr: gk.wr * 100,
+      portfolioEnd: Math.max(0, (gkEntryPortfolioStart - gk.finalWithdrawal) * (1 + gkEntryReturn / 100)),
+    };
+    const newHistory = [...gkHistory, entry];
+    setGkHistory(newHistory);
+    setGkBaseWithdrawal(Math.round(gk.finalWithdrawal));
+    setShowAddGKEntry(false);
+    setGkEntryYear(String(parseInt(gkEntryYear) + 1));
+    setGkEntryPortfolioStart(Math.round(entry.portfolioEnd));
+  };
+
   // ─── FLASH HOOKS ───
   const portFlash = useFlash(portfolio, "text");
   const gapFlash = useFlash(fireGap, "text");
   const runFlash = useFlash(runwayMonths, "text");
   const swrFlash = useFlash(plovSWR, "text");
-
   const pctFlash = useFlash(fireProgress, "text");
   const mosFlash = useFlash(projections.recommended, "text");
 
-  // Determine when to flash the tabs by hashing their dependency variables
-  const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}-${apartmentRent}`;  const allocHash = `${phase}-${portfolio}`;
+  const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}-${apartmentRent}`;
+  const allocHash = `${phase}-${portfolio}`;
   const projHash = `${portfolio}-${monthlyContrib}-${realReturn}`;
+  const gkHash = `${portfolio}-${Math.round(effectiveBaseWithdrawal)}-${gkNominalReturn}-${gkInflation}`;
 
   const runTabFlash = useFlash(runHash, "tab");
   const allocTabFlash = useFlash(allocHash, "tab");
   const projTabFlash = useFlash(projHash, "tab");
+  const gkTabFlash = useFlash(gkHash, "tab");
 
   if (!loaded) return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -478,10 +606,9 @@ function Dashboard() {
           </p>
         </div>
 
-        {/* INSTALL BUTTON GOES HERE INSIDE THE RETURN */}
         {deferredPrompt && (
           <button onClick={handleInstallClick} style={{
-            width: "100%", padding: 12, background: "#059669", color: "#fff", 
+            width: "100%", padding: 12, background: "#059669", color: "#fff",
             border: "none", borderRadius: 8, marginBottom: 20, fontWeight: 700, cursor: "pointer",
             fontFamily: "inherit"
           }}>
@@ -495,7 +622,7 @@ function Dashboard() {
             { label: "Portfolio", value: `€${(portfolio/1000).toFixed(0)}k`, color: "#fff", f: portFlash },
             { label: "FIRE Gap", value: fireGap > 0 ? `€${(fireGap/1000).toFixed(0)}k` : "DONE", color: fireGap > 0 ? "#f59e0b" : "#059669", f: gapFlash },
             { label: "Runway", value: `${runwayMonths} mo`, color: runwayMonths > 36 ? "#059669" : runwayMonths > 18 ? "#d97706" : "#dc2626", f: runFlash },
-            { label: "Plovdiv SWR", value: `${plovSWR.toFixed(1)}%`, color: plovSWR > 4.5 ? "#dc2626" : plovSWR > 3.8 ? "#d97706" : "#059669", f: swrFlash },
+            { label: "GK IWR", value: `${currentGKWR.toFixed(1)}%`, color: getGKZoneStyle(currentGKWR).color, f: swrFlash },
           ].map((s, i) => (
             <div key={i} style={{ background: "#111", borderRadius: 8, padding: "12px 14px", border: "1px solid #1a1a1a" }}>
               <div style={{ fontSize: 10, color: "#555", letterSpacing: "0.05em", marginBottom: 4 }}>{s.label}</div>
@@ -594,13 +721,13 @@ function Dashboard() {
           overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
         }}>
           {[
-            { key: "runway", label: "Runway & Levers", flashStyle: runTabFlash },
-            { key: "allocator", label: "Allocation", flashStyle: allocTabFlash },
-            { key: "projection", label: "Projection", flashStyle: projTabFlash },
+            { key: "runway",      label: "Runway & Levers", flashStyle: runTabFlash },
+            { key: "allocator",   label: "Allocation",      flashStyle: allocTabFlash },
+            { key: "projection",  label: "Projection",      flashStyle: projTabFlash },
+            { key: "withdrawals", label: "Withdrawals",     flashStyle: gkTabFlash },
           ].map(t => {
             const isActive = tab === t.key;
             const appliedFlash = !isActive ? t.flashStyle : { transition: "all 0.15s" };
-            
             return (
               <button key={t.key} onClick={() => setTab(t.key)} style={{
                 padding: isMobile ? "12px 16px" : "10px 20px", border: "none",
@@ -609,18 +736,17 @@ function Dashboard() {
                 color: isActive ? "#fff" : (appliedFlash.color || "#555"),
                 textShadow: appliedFlash.textShadow || "none",
                 fontSize: 13, fontWeight: isActive ? 700 : 500,
-                cursor: "pointer", fontFamily: "inherit", flexShrink: 0, 
+                cursor: "pointer", fontFamily: "inherit", flexShrink: 0,
                 borderRadius: "6px 6px 0 0", transition: appliedFlash.transition
               }}>{t.label}</button>
-            )
+            );
           })}
         </div>
 
-        {/* TABS */}
+        {/* TAB: RUNWAY & LEVERS */}
         {tab === "runway" && (
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            
-            {/* LEVERS COLUMN */}
+
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <Card highlight>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
@@ -671,11 +797,9 @@ function Dashboard() {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                
-                {/* STATUS QUO */}
-                {/* Highlights dark red if SWR exceeds 4.0% */}
-                  <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(plovSWR).color}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+
+                <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(plovSWR).color}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>1. Plovdiv Retirement</div>
                       <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>Net draw: €{plovTotal.toLocaleString()}/yr</div>
@@ -685,7 +809,6 @@ function Dashboard() {
                   </div>
                 </div>
 
-                {/* VALENCIA — shown only when valencia flag is on */}
                 {flags.valencia && (
                   <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(valSWR).color}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -699,7 +822,6 @@ function Dashboard() {
                   </div>
                 )}
 
-                {/* ASENOVGRAD — shown only when asenovgrad flag is on */}
                 {flags.asenovgrad && (
                   <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(buildSWR).color}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -717,7 +839,6 @@ function Dashboard() {
                   </div>
                 )}
 
-                {/* RESORT — shown only when resort flag is on */}
                 {flags.resort && (
                   <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(resortSWR).color}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -731,7 +852,6 @@ function Dashboard() {
                   </div>
                 )}
 
-                {/* FLEXIBLE TRAVEL — shown only when travelBudget flag is on */}
                 {flags.travelBudget && (
                   <div style={{ background: "#0a0a0a", borderRadius: 8, padding: 14, border: `1px solid ${getSWRTheme(travelSWR).color}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -746,8 +866,12 @@ function Dashboard() {
                 )}
 
               </div>
-              
-              <div style={{ marginTop: 16, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#888", lineHeight: 1.6 }}>
+
+              <div style={{ marginTop: 12, padding: "8px 10px", background: "#111", borderRadius: 6, fontSize: 10, color: "#555", fontFamily: "monospace" }}>
+                GK guardrails: <span style={{ color: "#2563eb" }}>3.2%</span> raise · <span style={{ color: "#059669" }}>3.2–4.0% safe</span> · <span style={{ color: "#d97706" }}>4.0–4.8% elevated</span> · <span style={{ color: "#dc2626" }}>4.8%+ cut</span>
+              </div>
+
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#888", lineHeight: 1.6 }}>
                 <strong>Recommendation: The Sequenced Hybrid.</strong> Optimize Plovdiv status quo with targeted premium anti-atrophy spend during the income gap. Trigger Valencia relocation <em>only</em> upon securing an employment contract to activate the Beckham Law shield.
               </div>
             </Card>
@@ -784,14 +908,70 @@ function Dashboard() {
               {bucketKeys.map(k => <BucketRow key={k} bucketKey={k} alloc={phaseData.buckets[k]} portfolioValue={portfolio} />)}
             </Card>
 
+            {/* GK BUCKET TARGETS — shown for decumulation phases */}
+            {(phase === "full_fire" || phase === "lean_fire") && (() => {
+              const b1Target = Math.round(plovTotal * 2);
+              const b2Target = Math.round(plovTotal * 5);
+              const b3Target = Math.max(0, portfolio - b1Target - b2Target);
+              const b1Current = fortressEur;
+              const b2Current = termEur;
+              const b3Current = Math.round(portfolio * phaseData.buckets.growth.target / 100);
+              const satelliteCap = Math.round(portfolio * 0.10);
+
+              const buckets = [
+                { label: "B1 — Safety (XEON)", color: "#059669", target: b1Target, current: b1Current, desc: "2yr expenses — draw first, never touch Growth" },
+                { label: "B2 — Stability (29GA/Bonds)", color: "#d97706", target: b2Target, current: b2Current, desc: "5yr expenses — refill B1 when depleted" },
+                { label: "B3 — Growth (VWCE)", color: "#2563eb", target: b3Target, current: b3Current, desc: "Everything else — never sell in drawdowns" },
+              ];
+
+              return (
+                <Card style={{ marginTop: 12, borderLeft: "3px solid #8b5cf6" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
+                    GK 3-Bucket Targets — {phaseData.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#555", marginBottom: 12 }}>
+                    Based on annual draw of €{Math.round(plovTotal).toLocaleString()}/yr · IWR {plovSWR.toFixed(2)}%
+                  </div>
+                  {buckets.map(b => {
+                    const diff = b.current - b.target;
+                    const tol = b.target * 0.05;
+                    const onTarget = Math.abs(diff) < tol;
+                    const statusColor = onTarget ? "#059669" : diff < 0 ? "#dc2626" : "#d97706";
+                    const statusLabel = onTarget ? "ON TARGET"
+                      : diff < 0 ? `SHORT €${Math.abs(Math.round(diff / 1000))}k`
+                      : `OVER €${Math.round(diff / 1000)}k`;
+                    return (
+                      <div key={b.label} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid #1a1a1a" }}>
+                        <div style={{ width: 3, background: b.color, borderRadius: 2, flexShrink: 0 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "#eee" }}>{b.label}</span>
+                            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                              <span style={{ fontSize: 11, color: "#555", fontFamily: "monospace" }}>target €{Math.round(b.target / 1000)}k</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, fontFamily: "monospace" }}>{statusLabel}</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#555", marginTop: 3 }}>{b.desc}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ marginTop: 10, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                    Satellite holdings (GOOG, AMZN, XAIX) must stay ≤ 10% of portfolio = <span style={{ color: "#aaa", fontFamily: "monospace" }}>€{Math.round(satelliteCap / 1000)}k</span> max. Remainder of B3 in VWCE.
+                  </div>
+                </Card>
+              );
+            })()}
+
             <Card style={{ marginTop: 12, borderLeft: "3px solid #dc2626" }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Hard Rules</div>
               {[
-                "Fortress has a euro FLOOR. If % gives less than floor, fund to floor.",
-                "Never sell Growth in a drawdown. That's what Fortress exists for.",
+                "Fortress has a euro FLOOR (GK B1). If % gives less than floor, fund to floor.",
+                "Never sell Growth in a drawdown. That's what Fortress + TermShield exist for.",
                 "Rebalance with new money only. Exception: annual rebalance post-FIRE.",
                 "All sells direct-routed to IBIS/IBIS2 or BVME.ETF. No SMART on sells.",
                 "Review this framework in September annually. No mid-year impulse changes.",
+                "GK: when a guardrail triggers, apply the ±10% adjustment immediately in the Withdrawals tab.",
               ].map((r, i) => (
                 <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 11, color: "#999", lineHeight: 1.5 }}>
                   <span style={{ color: "#444", fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>
@@ -814,15 +994,15 @@ function Dashboard() {
               </div>
             </Card>
 
-            <Card>
+            <Card style={{ marginBottom: 16 }}>
               <h3 style={{ fontSize: 13, fontWeight: 700, color: "#fff", margin: "0 0 12px" }}>Time to FIRE Milestones</h3>
               <div style={{ fontSize: 10, color: "#555", marginBottom: 12 }}>
                 {effectiveMonthlyContrib > 0 ? `Assumes €${effectiveMonthlyContrib.toLocaleString()}/mo contributions (Employed flag is on).` : "No contributions — Employed flag is off. Portfolio growth only."}
               </div>
 
               <ProjectionRow label="Lean FIRE" months={projections.p500} target={500000} color="#2563eb" />
-              <ProjectionRow label="Aggressive FIRE" months={projections.aggressive} target={FIRE_TARGETS.aggressive} color="#d97706" />
-              <ProjectionRow label="Recommended FIRE (3.5% SWR)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
+              <ProjectionRow label="Aggressive FIRE (4.0% GK IWR)" months={projections.aggressive} target={FIRE_TARGETS.aggressive} color="#d97706" />
+              <ProjectionRow label="Recommended FIRE (3.5% → GK safe zone)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
               <ProjectionRow label="Bulletproof FIRE" months={projections.bulletproof} target={FIRE_TARGETS.bulletproof} color="#8b5cf6" />
 
               <div style={{ marginTop: 16, padding: "12px 14px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #dc2626" }}>
@@ -841,6 +1021,405 @@ function Dashboard() {
                   })()}
                 </div>
               </div>
+            </Card>
+
+            {/* GK POST-FIRE SUSTAINABILITY */}
+            <Card style={{ borderLeft: "3px solid #8b5cf6" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>GK Model: Post-FIRE Sustainability</div>
+              <div style={{ fontSize: 10, color: "#555", marginBottom: 14 }}>
+                Simulates Guyton-Klinger from the €625k FIRE target with current expense level. Assumptions: 7.5% nominal return, 2.5% inflation.
+              </div>
+              {(() => {
+                const initWR = FIRE_TARGETS.recommended > 0 ? (plovTotal / FIRE_TARGETS.recommended) * 100 : 0;
+                const initTheme = getSWRTheme(initWR);
+                const rows50 = runGKSimulation({
+                  startPortfolio: FIRE_TARGETS.recommended,
+                  startWithdrawal: plovTotal,
+                  nominalReturn: 0.075,
+                  inflation: 0.025,
+                  years: 50,
+                });
+                const keyYears = [10, 20, 30, 40, 50];
+                return (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>
+                      From <strong style={{ color: "#aaa" }}>€{FIRE_TARGETS.recommended / 1000}k</strong> ·
+                      €{Math.round(plovTotal).toLocaleString()}/yr draw ·
+                      Initial IWR: <span style={{ color: initTheme.color, fontWeight: 700 }}>{initWR.toFixed(2)}% ({initTheme.label})</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
+                      {keyYears.map(y => {
+                        const row = rows50.find(r => r.year === y) || (rows50.length < y ? null : rows50[rows50.length - 1]);
+                        if (!row) return (
+                          <div key={y} style={{ padding: "8px 10px", background: "#1a1a1a", borderRadius: 6, textAlign: "center", border: "1px solid #3a1e1e" }}>
+                            <div style={{ fontSize: 10, color: "#555" }}>Year {y}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#dc2626", fontFamily: "monospace" }}>DEPLETED</div>
+                          </div>
+                        );
+                        const alive = row.portfolioEnd > 1000;
+                        return (
+                          <div key={y} style={{ padding: "8px 10px", background: "#1a1a1a", borderRadius: 6, textAlign: "center", border: `1px solid ${alive ? "#1a2e1a" : "#3a1e1e"}` }}>
+                            <div style={{ fontSize: 10, color: "#555" }}>Year {y}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: alive ? "#059669" : "#dc2626", fontFamily: "monospace" }}>
+                              {alive ? `€${Math.round(row.portfolioEnd / 1000)}k` : "DEPLETED"}
+                            </div>
+                            {alive && <div style={{ fontSize: 9, color: "#444", fontFamily: "monospace", marginTop: 2 }}>€{Math.round(row.finalWithdrawal / 1000)}k/yr</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#444", lineHeight: 1.5 }}>
+                      GK dynamically adjusts annual withdrawal: raises by inflation when returns are positive, skips raise after a loss year,
+                      cuts 10% if WR exceeds 4.8%, raises 10% if WR drops below 3.2%.
+                      For detailed year-by-year simulation use the <strong style={{ color: "#aaa" }}>Withdrawals</strong> tab.
+                    </div>
+                  </div>
+                );
+              })()}
+            </Card>
+          </div>
+        )}
+
+        {/* TAB: WITHDRAWALS */}
+        {tab === "withdrawals" && (
+          <div style={{ marginBottom: 28 }}>
+
+            {/* GK RULES OVERVIEW */}
+            <Card style={{ marginBottom: 16, borderLeft: "3px solid #8b5cf6" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12 }}>Guyton-Klinger Withdrawal Rules</div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+                {[
+                  { label: "Inflation Rule", color: "#d97706", text: "Each year, raise withdrawal by actual inflation (capped at 6%). SKIP the raise entirely if last year's portfolio return was negative." },
+                  { label: "Capital Preservation Rule", color: "#dc2626", text: "If withdrawal rate exceeds 4.8% → cut withdrawal by 10% immediately. Protects portfolio in bad sequence-of-returns years." },
+                  { label: "Prosperity Rule", color: "#2563eb", text: "If withdrawal rate drops below 3.2% → raise withdrawal by 10%. Captures upside in strong bull markets." },
+                ].map(r => (
+                  <div key={r.label} style={{ padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: `3px solid ${r.color}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: r.color, marginBottom: 4 }}>{r.label}</div>
+                    <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>{r.text}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: "8px 10px", background: "#111", borderRadius: 5, fontSize: 10, color: "#555", fontFamily: "monospace", lineHeight: 1.7 }}>
+                Initial Withdrawal Rate: <strong style={{ color: "#aaa" }}>4.0%</strong> ·
+                Prosperity at: <strong style={{ color: "#2563eb" }}>&lt;3.2%</strong> ·
+                Capital Preservation at: <strong style={{ color: "#dc2626" }}>&gt;4.8%</strong> ·
+                Adjustment: <strong style={{ color: "#aaa" }}>±10%</strong> ·
+                Inflation cap: <strong style={{ color: "#aaa" }}>6%/yr</strong>
+              </div>
+            </Card>
+
+            {/* CURRENT YEAR CHECK + BASE WITHDRAWAL */}
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 16 }}>
+
+              <Card highlight>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>This Year's Withdrawal Check</div>
+                <Slider label="Last Year's Portfolio Return" value={gkLastReturn} onChange={setGkLastReturn} min={-30} max={30} step={0.5} color="#059669"
+                  format={v => v >= 0 ? `+${v.toFixed(1)}` : `${v.toFixed(1)}`} suffix="%" />
+                <Slider label="This Year's Inflation" value={gkThisInflation} onChange={setGkThisInflation} min={0} max={10} step={0.1} color="#d97706"
+                  format={v => v.toFixed(1)} suffix="%" />
+
+                {(() => {
+                  const zone = getGKZoneStyle(currentYearGK.wr * 100);
+                  return (
+                    <div style={{ padding: "12px 14px", background: "#1a1a1a", borderRadius: 8, border: `1px solid ${zone.bg}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>Current base withdrawal</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "monospace" }}>€{Math.round(effectiveBaseWithdrawal).toLocaleString()}/yr</span>
+                      </div>
+                      {gkLastReturn < 0 && (
+                        <div style={{ marginBottom: 8, padding: "5px 8px", background: "#2a1a1a", borderRadius: 4, fontSize: 10, color: "#f87171" }}>
+                          Negative return year → inflation raise SKIPPED
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>Inflation-adjusted (proposed)</span>
+                        <span style={{ fontSize: 12, color: "#aaa", fontFamily: "monospace" }}>€{Math.round(currentYearGK.proposedWithdrawal).toLocaleString()}/yr</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>GK trigger</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: currentYearGK.trigger ? zone.color : "#555" }}>
+                          {currentYearGK.trigger === "CAPITAL_PRESERVATION" ? "↓ Capital Preservation −10%" :
+                           currentYearGK.trigger === "PROSPERITY" ? "↑ Prosperity +10%" : "None"}
+                        </span>
+                      </div>
+                      <div style={{ height: 1, background: "#333", margin: "8px 0" }} />
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#ccc" }}>Recommended withdrawal</span>
+                        <span style={{ fontSize: 17, fontWeight: 800, color: zone.color, fontFamily: "monospace" }}>€{Math.round(currentYearGK.finalWithdrawal).toLocaleString()}/yr</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>Withdrawal rate</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: zone.color, fontFamily: "monospace" }}>
+                          {(currentYearGK.wr * 100).toFixed(2)}% · {zone.label}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <button onClick={() => setGkBaseWithdrawal(Math.round(currentYearGK.finalWithdrawal))} style={{
+                  width: "100%", marginTop: 10, padding: "9px",
+                  background: "#1a2e1a", border: "1px solid #059669",
+                  borderRadius: 6, color: "#6ee7b7",
+                  fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit"
+                }}>
+                  Apply as New Base (€{Math.round(currentYearGK.finalWithdrawal).toLocaleString()}/yr)
+                </button>
+              </Card>
+
+              <Card highlight>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Base Withdrawal Setting</div>
+                <Slider label="GK Base Withdrawal" value={Math.max(10000, Math.round(effectiveBaseWithdrawal))}
+                  onChange={v => setGkBaseWithdrawal(v)}
+                  min={10000} max={80000} step={500} color="#8b5cf6"
+                  format={v => `€${v.toLocaleString()}`} suffix="/yr" />
+                <div style={{ fontSize: 11, color: "#555", marginTop: -6, marginBottom: 14, lineHeight: 1.6 }}>
+                  Your current GK withdrawal base. At 0, defaults to current expense level.
+                  Update each year after applying the GK rules.
+                </div>
+
+                {(() => {
+                  const zone = getGKZoneStyle(currentGKWR);
+                  return (
+                    <div style={{ padding: "12px 14px", background: "#1a1a1a", borderRadius: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>Current IWR</span>
+                        <span style={{ fontSize: 15, fontWeight: 800, color: zone.color, fontFamily: "monospace" }}>{currentGKWR.toFixed(2)}%</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>GK Zone</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: zone.color }}>{zone.label}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>Monthly equivalent</span>
+                        <span style={{ fontSize: 12, color: "#aaa", fontFamily: "monospace" }}>€{Math.round(effectiveBaseWithdrawal / 12).toLocaleString()}/mo</span>
+                      </div>
+                      <div style={{ height: 1, background: "#222", margin: "8px 0" }} />
+                      <div style={{ fontSize: 10, color: "#555", lineHeight: 1.6 }}>
+                        IWR of 4.0% on €{FIRE_TARGETS.recommended / 1000}k = €{Math.round(FIRE_TARGETS.recommended * 0.04).toLocaleString()}/yr initial target
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {gkBaseWithdrawal > 0 && (
+                  <button onClick={() => setGkBaseWithdrawal(0)} style={{
+                    marginTop: 10, padding: "5px 10px", background: "transparent",
+                    border: "1px solid #333", borderRadius: 4, color: "#555",
+                    fontSize: 10, cursor: "pointer", fontFamily: "inherit"
+                  }}>
+                    Reset to expense level
+                  </button>
+                )}
+              </Card>
+            </div>
+
+            {/* 40-YEAR SIMULATION */}
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>40-Year GK Simulation</div>
+                <div style={{ fontSize: 10, color: "#555", fontFamily: "monospace" }}>
+                  {gkNominalReturn.toFixed(1)}% nominal · {gkInflation.toFixed(1)}% inflation · real {(gkNominalReturn - gkInflation).toFixed(1)}%
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                <Slider label="Expected Nominal Return" value={gkNominalReturn} onChange={setGkNominalReturn} min={2} max={14} step={0.5} color="#059669" format={v => v.toFixed(1)} suffix="%" />
+                <Slider label="Expected Inflation" value={gkInflation} onChange={setGkInflation} min={0} max={8} step={0.1} color="#d97706" format={v => v.toFixed(1)} suffix="%" />
+              </div>
+
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace", minWidth: 520 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #333" }}>
+                      {["Yr", "Portfolio Start", "Proposed", "Trigger", "Withdrawal", "WR", "End Balance"].map(h => (
+                        <th key={h} style={{ padding: "6px 8px", textAlign: h === "Yr" ? "center" : "right", color: "#444", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {simRows.map(row => {
+                      const wrStyle = getSWRTheme(row.wr);
+                      const isKeyYear = [5, 10, 15, 20, 25, 30, 35, 40].includes(row.year);
+                      return (
+                        <tr key={row.year} style={{
+                          borderBottom: "1px solid #0f0f0f",
+                          background: isKeyYear ? "#141414" : "transparent",
+                          opacity: row.portfolioEnd <= 0 ? 0.4 : 1,
+                        }}>
+                          <td style={{ padding: "5px 8px", textAlign: "center", color: isKeyYear ? "#fff" : "#666", fontWeight: isKeyYear ? 700 : 400 }}>{row.year}</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: "#888" }}>€{Math.round(row.portfolioStart / 1000)}k</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: "#666" }}>€{Math.round(row.proposedWithdrawal / 1000)}k</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right" }}>
+                            {row.trigger ? (
+                              <span style={{
+                                fontSize: 9, padding: "2px 5px", borderRadius: 3, fontWeight: 700,
+                                background: row.trigger === "PROSPERITY" ? "#1e3a5f" : "#7f1d1d",
+                                color: row.trigger === "PROSPERITY" ? "#93c5fd" : "#fca5a5",
+                              }}>
+                                {row.trigger === "PROSPERITY" ? "↑ PROSPER" : "↓ CUT"}
+                              </span>
+                            ) : <span style={{ color: "#222" }}>—</span>}
+                          </td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: "#ccc", fontWeight: isKeyYear ? 700 : 400 }}>€{Math.round(row.finalWithdrawal).toLocaleString()}</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: wrStyle.color, fontWeight: 700 }}>{row.wr.toFixed(1)}%</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: row.portfolioEnd > 0 ? "#059669" : "#dc2626", fontWeight: isKeyYear ? 700 : 400 }}>
+                            {row.portfolioEnd > 0 ? `€${Math.round(row.portfolioEnd / 1000)}k` : "DEPLETED"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* WITHDRAWAL HISTORY LOG */}
+            <Card>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Withdrawal Log</div>
+                  <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>Record each year's actual data to track GK adjustments over time</div>
+                </div>
+                <button onClick={() => {
+                  if (!showAddGKEntry) setGkEntryPortfolioStart(portfolio);
+                  setShowAddGKEntry(!showAddGKEntry);
+                }} style={{
+                  padding: "6px 12px",
+                  background: showAddGKEntry ? "#222" : "#1a2e1a",
+                  border: `1px solid ${showAddGKEntry ? "#333" : "#059669"}`,
+                  borderRadius: 5, color: showAddGKEntry ? "#888" : "#6ee7b7",
+                  fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  {showAddGKEntry ? "Cancel" : "+ Record Year"}
+                </button>
+              </div>
+
+              {showAddGKEntry && (
+                <div style={{ padding: "14px", background: "#1a1a1a", borderRadius: 8, marginBottom: 14, border: "1px solid #2a2a2a" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#ccc", marginBottom: 12 }}>Record Actual Year Data</div>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 4 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>Year Label</div>
+                      <input value={gkEntryYear} onChange={e => setGkEntryYear(e.target.value)} style={{
+                        width: "100%", background: "#111", border: "1px solid #333", borderRadius: 4,
+                        color: "#fff", padding: "7px 10px", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box",
+                      }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>Portfolio Start (€)</div>
+                      <input type="number" value={gkEntryPortfolioStart} onChange={e => setGkEntryPortfolioStart(Number(e.target.value))} style={{
+                        width: "100%", background: "#111", border: "1px solid #333", borderRadius: 4,
+                        color: "#fff", padding: "7px 10px", fontSize: 13, fontFamily: "monospace", boxSizing: "border-box",
+                      }} />
+                    </div>
+                  </div>
+                  <Slider label="Actual Portfolio Return" value={gkEntryReturn} onChange={setGkEntryReturn} min={-30} max={30} step={0.5} color="#059669"
+                    format={v => v >= 0 ? `+${v.toFixed(1)}` : `${v.toFixed(1)}`} suffix="%" />
+                  <Slider label="Actual Inflation" value={gkEntryInflation} onChange={setGkEntryInflation} min={0} max={10} step={0.1} color="#d97706"
+                    format={v => v.toFixed(1)} suffix="%" />
+
+                  {(() => {
+                    const preview = calcGKNextStep({
+                      portfolio: gkEntryPortfolioStart,
+                      lastWithdrawal: lastHistoryWithdrawal,
+                      annualNominalReturn: gkEntryReturn / 100,
+                      inflation: gkEntryInflation / 100,
+                    });
+                    const z = getGKZoneStyle(preview.wr * 100);
+                    return (
+                      <div style={{ padding: "10px 12px", background: "#111", borderRadius: 6, marginBottom: 12, fontSize: 11 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ color: "#666" }}>Last withdrawal base</span>
+                          <span style={{ color: "#aaa", fontFamily: "monospace" }}>€{Math.round(lastHistoryWithdrawal).toLocaleString()}/yr</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ color: "#666" }}>Proposed (after inflation)</span>
+                          <span style={{ color: "#aaa", fontFamily: "monospace" }}>€{Math.round(preview.proposedWithdrawal).toLocaleString()}/yr</span>
+                        </div>
+                        {preview.trigger && (
+                          <div style={{ marginBottom: 4, color: z.color, fontWeight: 700 }}>
+                            GK Rule: {preview.trigger === "CAPITAL_PRESERVATION" ? "↓ Capital Preservation −10%" : "↑ Prosperity +10%"}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: "#ccc", fontWeight: 700 }}>Final withdrawal</span>
+                          <span style={{ color: z.color, fontWeight: 800, fontFamily: "monospace" }}>
+                            €{Math.round(preview.finalWithdrawal).toLocaleString()}/yr · {(preview.wr * 100).toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <button onClick={addGKHistoryEntry} style={{
+                    width: "100%", padding: "10px", background: "#1a2e1a",
+                    border: "1px solid #059669", borderRadius: 6,
+                    color: "#6ee7b7", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    Save Entry & Update Base Withdrawal
+                  </button>
+                </div>
+              )}
+
+              {gkHistory.length === 0 ? (
+                <div style={{ fontSize: 12, color: "#444", textAlign: "center", padding: "28px 0", lineHeight: 1.6 }}>
+                  No withdrawal records yet.<br />
+                  <span style={{ fontSize: 11 }}>Use "+ Record Year" to log each year's actual return and inflation.</span>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace", minWidth: 560 }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #333" }}>
+                          {["Year", "Portfolio", "Return", "Inflation", "Base", "Withdrawal", "WR", "Rule"].map(h => (
+                            <th key={h} style={{ padding: "6px 8px", textAlign: "right", color: "#444", fontWeight: 600, fontSize: 10 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gkHistory.map(entry => {
+                          const z = getGKZoneStyle(entry.wr);
+                          return (
+                            <tr key={entry.id} style={{ borderBottom: "1px solid #111" }}>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#fff", fontWeight: 700 }}>{entry.yearLabel}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#888" }}>€{Math.round(entry.portfolioStart / 1000)}k</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: entry.actualReturn >= 0 ? "#059669" : "#dc2626" }}>
+                                {entry.actualReturn >= 0 ? "+" : ""}{entry.actualReturn.toFixed(1)}%
+                              </td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#d97706" }}>{entry.actualInflation.toFixed(1)}%</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#555" }}>€{Math.round(entry.lastWithdrawal / 1000)}k</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#ccc", fontWeight: 700 }}>€{Math.round(entry.finalWithdrawal).toLocaleString()}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: z.color, fontWeight: 700 }}>{entry.wr.toFixed(2)}%</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                                {entry.trigger ? (
+                                  <span style={{
+                                    fontSize: 9, padding: "2px 5px", borderRadius: 3, fontWeight: 700,
+                                    background: entry.trigger === "PROSPERITY" ? "#1e3a5f" : "#7f1d1d",
+                                    color: entry.trigger === "PROSPERITY" ? "#93c5fd" : "#fca5a5",
+                                  }}>
+                                    {entry.trigger === "PROSPERITY" ? "↑" : "↓"}
+                                  </span>
+                                ) : <span style={{ color: "#333" }}>—</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={() => {
+                    if (window.confirm("Clear all withdrawal history? This cannot be undone.")) setGkHistory([]);
+                  }} style={{
+                    marginTop: 12, padding: "5px 10px", background: "transparent",
+                    border: "1px solid #2a2a2a", borderRadius: 4, color: "#444",
+                    fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    Clear History
+                  </button>
+                </div>
+              )}
             </Card>
           </div>
         )}
@@ -880,13 +1459,14 @@ function Dashboard() {
           </div>
         )}
 
-      <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
-        Joseph Harari · U15566654 · v{APP_VERSION} · Bulgarian Tax Resident · 
-        FIRE Target €{FIRE_TARGETS.recommended / 1000}k 
-        (3.5% SWR on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}/yr) · 
-        Last framework revision: April 2026
-        <br/>State auto-saves. Update portfolio value monthly.
-      </div>
+        <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
+          Joseph Harari · U15566654 · v{APP_VERSION} · Bulgarian Tax Resident ·
+          FIRE Target €{FIRE_TARGETS.recommended / 1000}k
+          (GK IWR 4.0% · guardrails 3.2% / 4.8% on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}/yr) ·
+          Last framework revision: May 2026
+          <br />State auto-saves. Update portfolio value monthly.
+        </div>
+
       </div>
     </div>
   );
