@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260504.1";
+const APP_VERSION = "20260504.2";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -380,6 +380,10 @@ function Dashboard() {
   const [gkEntryPortfolioStart, setGkEntryPortfolioStart] = useState(0);
   const [gkEntryReturn, setGkEntryReturn] = useState(7.5);
   const [gkEntryInflation, setGkEntryInflation] = useState(2.5);
+  // Separate portfolio value for the "This Year's Check" panel — lets user enter
+  // their actual current balance without disturbing the main portfolio slider.
+  // 0 = not yet set, will be initialised to main portfolio on first use.
+  const [gkCheckPortfolio, setGkCheckPortfolio] = useState(0);
 
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
@@ -514,12 +518,14 @@ function Dashboard() {
   const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
   const currentGKWR = portfolio > 0 ? (effectiveBaseWithdrawal / portfolio) * 100 : 0;
 
+  // Use independent portfolio value for the check panel so return magnitude is meaningful
+  const checkPortfolio = gkCheckPortfolio > 0 ? gkCheckPortfolio : portfolio;
   const currentYearGK = useMemo(() => calcGKNextStep({
-    portfolio,
+    portfolio: checkPortfolio,
     lastWithdrawal: effectiveBaseWithdrawal,
     annualNominalReturn: gkLastReturn / 100,
     inflation: gkThisInflation / 100,
-  }), [portfolio, effectiveBaseWithdrawal, gkLastReturn, gkThisInflation]);
+  }), [checkPortfolio, effectiveBaseWithdrawal, gkLastReturn, gkThisInflation]);
 
   const simRows = useMemo(() => runGKSimulation({
     startPortfolio: portfolio,
@@ -1086,25 +1092,127 @@ function Dashboard() {
 
             {/* GK RULES OVERVIEW */}
             <Card style={{ marginBottom: 16, borderLeft: "3px solid #8b5cf6" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12 }}>Guyton-Klinger Withdrawal Rules</div>
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 6 }}>Guyton-Klinger Dynamic Withdrawal Strategy</div>
+              <div style={{ fontSize: 12, color: "#888", lineHeight: 1.7, marginBottom: 18 }}>
+                The problem with a fixed "withdraw 3.5% every year" rule: it doesn't respond to reality. A fixed rule is too conservative in
+                great markets (leaving money on the table) and too rigid in bad ones (ignoring portfolio stress). Guyton-Klinger (GK) solves
+                this by working with an <strong style={{ color: "#ccc" }}>annual dollar amount</strong> rather than a fixed percentage.
+                You start with a higher rate (4.0% vs 3.5%) and let three automatic rules adjust the amount each year — cutting when the
+                portfolio is under pressure, raising when it's running hot. The result: sustainably higher lifetime income without running
+                out of money over a 40–50 year horizon.
+              </div>
+
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#8b5cf6", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>How it works each year — the annual process</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
                 {[
-                  { label: "Inflation Rule", color: "#d97706", text: "Each year, raise withdrawal by actual inflation (capped at 6%). SKIP the raise entirely if last year's portfolio return was negative." },
-                  { label: "Capital Preservation Rule", color: "#dc2626", text: "If withdrawal rate exceeds 4.8% → cut withdrawal by 10% immediately. Protects portfolio in bad sequence-of-returns years." },
-                  { label: "Prosperity Rule", color: "#2563eb", text: "If withdrawal rate drops below 3.2% → raise withdrawal by 10%. Captures upside in strong bull markets." },
-                ].map(r => (
-                  <div key={r.label} style={{ padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, borderLeft: `3px solid ${r.color}` }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: r.color, marginBottom: 4 }}>{r.label}</div>
-                    <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>{r.text}</div>
+                  {
+                    step: "1",
+                    title: "Start from last year's withdrawal dollar amount",
+                    desc: "GK tracks a specific annual withdrawal in euros (e.g. €25,000/yr), not a percentage. You never recalculate from scratch — you adjust the previous year's amount. This means your income is stable by default and only changes when a rule fires.",
+                  },
+                  {
+                    step: "2",
+                    title: "Apply the Inflation Rule (or skip it)",
+                    desc: "Raise this year's withdrawal by the actual CPI rate (capped at 6% even if inflation is higher). The critical exception: if last year's portfolio return was negative, skip the inflation raise entirely. You just hold the same amount. The portfolio needs breathing room in loss years.",
+                  },
+                  {
+                    step: "3",
+                    title: "Calculate your current Withdrawal Rate (WR)",
+                    desc: "Divide the proposed withdrawal by your current portfolio value. Example: €26,000 ÷ €650,000 = 4.0% WR. This is the key metric — where it sits relative to the guardrails determines whether a rule fires.",
+                  },
+                  {
+                    step: "4",
+                    title: "Apply guardrail rules if WR has crossed a threshold",
+                    desc: "At most one rule fires per year. Capital Preservation (WR too high → cut 10%) takes priority over Prosperity (WR too low → raise 10%). If WR is between 3.2% and 4.8%, no rule fires and the inflation-adjusted amount stands.",
+                  },
+                ].map(s => (
+                  <div key={s.step} style={{ display: "flex", gap: 12, padding: "10px 12px", background: "#141414", borderRadius: 6, alignItems: "flex-start" }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: "#8b5cf6", minWidth: 24, lineHeight: 1.2, flexShrink: 0 }}>{s.step}</div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#ccc", marginBottom: 4 }}>{s.title}</div>
+                      <div style={{ fontSize: 11, color: "#666", lineHeight: 1.6 }}>{s.desc}</div>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div style={{ padding: "8px 10px", background: "#111", borderRadius: 5, fontSize: 10, color: "#555", fontFamily: "monospace", lineHeight: 1.7 }}>
-                Initial Withdrawal Rate: <strong style={{ color: "#aaa" }}>4.0%</strong> ·
-                Prosperity at: <strong style={{ color: "#2563eb" }}>&lt;3.2%</strong> ·
-                Capital Preservation at: <strong style={{ color: "#dc2626" }}>&gt;4.8%</strong> ·
-                Adjustment: <strong style={{ color: "#aaa" }}>±10%</strong> ·
-                Inflation cap: <strong style={{ color: "#aaa" }}>6%/yr</strong>
+
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#8b5cf6", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>The three rules in detail</div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 18 }}>
+                {[
+                  {
+                    label: "Inflation Rule",
+                    color: "#d97706",
+                    trigger: "Every year (default)",
+                    action: "Raise withdrawal by CPI, capped at 6%",
+                    exception: "SKIP entirely if last year's return was negative",
+                    why: "Preserves your real purchasing power in normal years. The skip clause prevents you from compounding your withdrawal during a bad market year — giving the portfolio a chance to recover before you demand more from it.",
+                    example: "Base €25,000, CPI = 3% → new amount €25,750. But if last year was −10%: amount stays €25,000.",
+                  },
+                  {
+                    label: "Capital Preservation Rule",
+                    color: "#dc2626",
+                    trigger: "When WR > 4.8%",
+                    action: "Cut withdrawal by 10% immediately",
+                    exception: null,
+                    why: "The portfolio is under stress — you're drawing too much relative to its current size. A 10% cut reduces the draw and gives the portfolio room to recover. This fires even in good years if WR is elevated (e.g. after an inflation raise).",
+                    example: "WR hits 5.1% → proposed €27,000 → after cut: €24,300. WR drops back below 4.8%.",
+                  },
+                  {
+                    label: "Prosperity Rule",
+                    color: "#2563eb",
+                    trigger: "When WR < 3.2%",
+                    action: "Raise withdrawal by 10%",
+                    exception: "Only fires if Capital Preservation did NOT fire",
+                    why: "The portfolio is growing faster than you're withdrawing — you're leaving money on the table. A 10% raise captures upside and rewards you for a strong market sequence. The portfolio is well ahead of your spending.",
+                    example: "Portfolio grew 20%, WR drops to 2.9% → proposed €24,500 → after raise: €26,950.",
+                  },
+                ].map(r => (
+                  <div key={r.label} style={{ padding: "14px", background: "#1a1a1a", borderRadius: 8, borderLeft: `3px solid ${r.color}` }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: r.color, marginBottom: 10 }}>{r.label}</div>
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Trigger</div>
+                      <div style={{ fontSize: 11, color: "#aaa" }}>{r.trigger}</div>
+                    </div>
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Action</div>
+                      <div style={{ fontSize: 11, color: "#aaa" }}>{r.action}</div>
+                    </div>
+                    {r.exception && (
+                      <div style={{ marginBottom: 6 }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Exception</div>
+                        <div style={{ fontSize: 11, color: "#f87171" }}>{r.exception}</div>
+                      </div>
+                    )}
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Why</div>
+                      <div style={{ fontSize: 10, color: "#666", lineHeight: 1.6 }}>{r.why}</div>
+                    </div>
+                    <div style={{ padding: "6px 8px", background: "#111", borderRadius: 4 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Example</div>
+                      <div style={{ fontSize: 10, color: "#555", fontFamily: "monospace", lineHeight: 1.5 }}>{r.example}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+                <div style={{ padding: "10px 12px", background: "#111", borderRadius: 6, fontSize: 10, color: "#555", fontFamily: "monospace", lineHeight: 2 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: "inherit", textTransform: "uppercase", letterSpacing: "0.08em" }}>Configuration used in this dashboard</div>
+                  Initial Withdrawal Rate: <strong style={{ color: "#aaa" }}>4.0%</strong> of portfolio at FIRE date<br />
+                  Prosperity guardrail: <strong style={{ color: "#2563eb" }}>WR &lt; 3.2%</strong> → raise +10%<br />
+                  Capital Preservation: <strong style={{ color: "#dc2626" }}>WR &gt; 4.8%</strong> → cut −10%<br />
+                  Annual adjustment: <strong style={{ color: "#aaa" }}>±10%</strong> per triggered rule<br />
+                  Inflation cap: <strong style={{ color: "#aaa" }}>6%/yr</strong> maximum raise
+                </div>
+                <div style={{ padding: "10px 12px", background: "#111", borderRadius: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#d97706", marginBottom: 6 }}>Why a positive year can produce a LOWER withdrawal than a negative year</div>
+                  <div style={{ fontSize: 10, color: "#555", lineHeight: 1.7 }}>
+                    In a negative year, the inflation raise is simply <strong style={{ color: "#777" }}>skipped</strong> — you hold last year's amount.<br />
+                    In a positive year, the inflation raise is <strong style={{ color: "#777" }}>applied first</strong>, then the WR is checked. If the raise pushes WR above
+                    4.8%, the Capital Preservation Rule fires and cuts 10% — resulting in a <em>lower</em> final withdrawal than skipping the raise would have given.
+                    This is by design: portfolio protection takes priority over income maximisation.
+                  </div>
+                </div>
               </div>
             </Card>
 
@@ -1112,43 +1220,84 @@ function Dashboard() {
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 16 }}>
 
               <Card highlight>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>This Year's Withdrawal Check</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>This Year's Withdrawal Check</div>
+                <div style={{ fontSize: 11, color: "#555", lineHeight: 1.6, marginBottom: 14 }}>
+                  Enter your current portfolio value and last year's data to get the GK-recommended withdrawal for this year.
+                </div>
+
+                <Slider label="Current Portfolio Value" value={checkPortfolio}
+                  onChange={setGkCheckPortfolio}
+                  min={50000} max={1500000} step={1000} color="#8b5cf6"
+                  format={v => `€${Math.round(v / 1000)}k`} suffix="" />
+                <div style={{ fontSize: 10, color: "#444", marginTop: -8, marginBottom: 12, lineHeight: 1.5 }}>
+                  Your portfolio balance <em>right now</em> — after last year's return has already been realised.
+                  {gkCheckPortfolio > 0 && gkCheckPortfolio !== portfolio && (
+                    <span
+                      onClick={() => setGkCheckPortfolio(0)}
+                      style={{ marginLeft: 8, color: "#8b5cf6", cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      Reset to main portfolio (€{Math.round(portfolio / 1000)}k)
+                    </span>
+                  )}
+                </div>
+
                 <Slider label="Last Year's Portfolio Return" value={gkLastReturn} onChange={setGkLastReturn} min={-30} max={30} step={0.5} color="#059669"
                   format={v => v >= 0 ? `+${v.toFixed(1)}` : `${v.toFixed(1)}`} suffix="%" />
-                <Slider label="This Year's Inflation" value={gkThisInflation} onChange={setGkThisInflation} min={0} max={10} step={0.1} color="#d97706"
+                <div style={{ fontSize: 10, color: "#444", marginTop: -8, marginBottom: 12, lineHeight: 1.5 }}>
+                  Only the <strong style={{ color: "#666" }}>sign</strong> matters here — positive = inflation raise is applied this year, negative = raise is skipped.
+                  The magnitude of the return is already reflected in the portfolio value above.
+                </div>
+
+                <Slider label="This Year's Inflation (CPI)" value={gkThisInflation} onChange={setGkThisInflation} min={0} max={10} step={0.1} color="#d97706"
                   format={v => v.toFixed(1)} suffix="%" />
+                <div style={{ fontSize: 10, color: "#444", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
+                  The inflation rate used to adjust your withdrawal (capped at 6% even if actual CPI is higher).
+                </div>
 
                 {(() => {
                   const zone = getGKZoneStyle(currentYearGK.wr * 100);
+                  const positiveYearWithCut = gkLastReturn >= 0 && currentYearGK.trigger === "CAPITAL_PRESERVATION";
                   return (
                     <div style={{ padding: "12px 14px", background: "#1a1a1a", borderRadius: 8, border: `1px solid ${zone.bg}` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, color: "#666" }}>Current base withdrawal</span>
+                        <span style={{ fontSize: 11, color: "#666" }}>GK base withdrawal (last year)</span>
                         <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: "monospace" }}>€{Math.round(effectiveBaseWithdrawal).toLocaleString()}/yr</span>
                       </div>
                       {gkLastReturn < 0 && (
-                        <div style={{ marginBottom: 8, padding: "5px 8px", background: "#2a1a1a", borderRadius: 4, fontSize: 10, color: "#f87171" }}>
-                          Negative return year → inflation raise SKIPPED
+                        <div style={{ marginBottom: 8, padding: "6px 8px", background: "#2a1515", borderRadius: 4, fontSize: 10, color: "#f87171", lineHeight: 1.5 }}>
+                          Negative return year → inflation raise <strong>SKIPPED</strong>. Withdrawal stays at last year's amount.
                         </div>
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, color: "#666" }}>Inflation-adjusted (proposed)</span>
+                        <span style={{ fontSize: 11, color: "#666" }}>After inflation adjustment (proposed)</span>
                         <span style={{ fontSize: 12, color: "#aaa", fontFamily: "monospace" }}>€{Math.round(currentYearGK.proposedWithdrawal).toLocaleString()}/yr</span>
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, color: "#666" }}>GK trigger</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: currentYearGK.trigger ? zone.color : "#555" }}>
-                          {currentYearGK.trigger === "CAPITAL_PRESERVATION" ? "↓ Capital Preservation −10%" :
-                           currentYearGK.trigger === "PROSPERITY" ? "↑ Prosperity +10%" : "None"}
+                        <span style={{ fontSize: 11, color: "#666" }}>WR before guardrail check</span>
+                        <span style={{ fontSize: 11, color: "#555", fontFamily: "monospace" }}>
+                          €{Math.round(currentYearGK.proposedWithdrawal).toLocaleString()} ÷ €{Math.round(checkPortfolio).toLocaleString()} = {((currentYearGK.proposedWithdrawal / checkPortfolio) * 100).toFixed(2)}%
                         </span>
                       </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#666" }}>GK rule fired</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: currentYearGK.trigger ? zone.color : "#555" }}>
+                          {currentYearGK.trigger === "CAPITAL_PRESERVATION" ? "↓ Capital Preservation −10%" :
+                           currentYearGK.trigger === "PROSPERITY" ? "↑ Prosperity +10%" : "None — within guardrails"}
+                        </span>
+                      </div>
+                      {positiveYearWithCut && (
+                        <div style={{ marginBottom: 8, padding: "6px 8px", background: "#2a1a10", borderRadius: 4, fontSize: 10, color: "#fb923c", lineHeight: 1.5 }}>
+                          Positive year, but the inflation raise pushed WR above 4.8% — Capital Preservation cut overrides it.
+                          Final amount is lower than a year where the raise was simply skipped. This is correct GK behaviour.
+                        </div>
+                      )}
                       <div style={{ height: 1, background: "#333", margin: "8px 0" }} />
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: "#ccc" }}>Recommended withdrawal</span>
                         <span style={{ fontSize: 17, fontWeight: 800, color: zone.color, fontFamily: "monospace" }}>€{Math.round(currentYearGK.finalWithdrawal).toLocaleString()}/yr</span>
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 11, color: "#666" }}>Withdrawal rate</span>
+                        <span style={{ fontSize: 11, color: "#666" }}>Final Withdrawal Rate</span>
                         <span style={{ fontSize: 12, fontWeight: 700, color: zone.color, fontFamily: "monospace" }}>
                           {(currentYearGK.wr * 100).toFixed(2)}% · {zone.label}
                         </span>
@@ -1168,35 +1317,53 @@ function Dashboard() {
               </Card>
 
               <Card highlight>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Base Withdrawal Setting</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>GK Base Withdrawal &amp; IWR</div>
+                <div style={{ fontSize: 11, color: "#555", lineHeight: 1.7, marginBottom: 16 }}>
+                  <strong style={{ color: "#888" }}>GK Base Withdrawal</strong> is the annual withdrawal amount you're currently working from.
+                  It's a dollar figure (e.g. €25,000/yr), not a percentage. You set it once at FIRE date using the IWR, and
+                  then update it each year after applying the GK rules. All future adjustments are relative to this number.
+                  <br /><br />
+                  <strong style={{ color: "#888" }}>IWR (Initial Withdrawal Rate)</strong> is the percentage of your portfolio you withdraw in Year 1 of retirement.
+                  GK uses 4.0% as the starting rate — higher than the conservative 3.5% SWR, justified by the guardrail
+                  rules that protect against over-withdrawal. At €{(FIRE_TARGETS.recommended / 1000).toFixed(0)}k portfolio,
+                  a 4.0% IWR = €{Math.round(FIRE_TARGETS.recommended * 0.04).toLocaleString()}/yr.
+                </div>
+
                 <Slider label="GK Base Withdrawal" value={Math.max(10000, Math.round(effectiveBaseWithdrawal))}
                   onChange={v => setGkBaseWithdrawal(v)}
                   min={10000} max={80000} step={500} color="#8b5cf6"
                   format={v => `€${v.toLocaleString()}`} suffix="/yr" />
-                <div style={{ fontSize: 11, color: "#555", marginTop: -6, marginBottom: 14, lineHeight: 1.6 }}>
-                  Your current GK withdrawal base. At 0, defaults to current expense level.
-                  Update each year after applying the GK rules.
+                <div style={{ fontSize: 10, color: "#444", marginTop: -6, marginBottom: 16, lineHeight: 1.5 }}>
+                  When set to 0, defaults to your annual expense setting. Update this after each year's "Apply as New Base" action.
                 </div>
 
                 {(() => {
                   const zone = getGKZoneStyle(currentGKWR);
                   return (
                     <div style={{ padding: "12px 14px", background: "#1a1a1a", borderRadius: 8 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+                        Current status (base withdrawal ÷ main portfolio)
+                      </div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, color: "#666" }}>Current IWR</span>
+                        <span style={{ fontSize: 11, color: "#666" }}>Current Withdrawal Rate (IWR)</span>
                         <span style={{ fontSize: 15, fontWeight: 800, color: zone.color, fontFamily: "monospace" }}>{currentGKWR.toFixed(2)}%</span>
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                         <span style={{ fontSize: 11, color: "#666" }}>GK Zone</span>
                         <span style={{ fontSize: 12, fontWeight: 700, color: zone.color }}>{zone.label}</span>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                         <span style={{ fontSize: 11, color: "#666" }}>Monthly equivalent</span>
                         <span style={{ fontSize: 12, color: "#aaa", fontFamily: "monospace" }}>€{Math.round(effectiveBaseWithdrawal / 12).toLocaleString()}/mo</span>
                       </div>
                       <div style={{ height: 1, background: "#222", margin: "8px 0" }} />
-                      <div style={{ fontSize: 10, color: "#555", lineHeight: 1.6 }}>
-                        IWR of 4.0% on €{FIRE_TARGETS.recommended / 1000}k = €{Math.round(FIRE_TARGETS.recommended * 0.04).toLocaleString()}/yr initial target
+                      <div style={{ fontSize: 10, color: "#444", lineHeight: 1.7, marginTop: 8 }}>
+                        <strong style={{ color: "#666" }}>GK Zone</strong> tells you where your current withdrawal rate sits relative to the guardrails:
+                        <br />
+                        <span style={{ color: "#2563eb" }}>■</span> <strong style={{ color: "#666" }}>GK SAFE</strong> (WR &lt; 3.2%) — portfolio running hot, Prosperity Rule eligible<br />
+                        <span style={{ color: "#059669" }}>■</span> <strong style={{ color: "#666" }}>GK HEALTHY</strong> (3.2%–4.0%) — well within guardrails, no rule fires<br />
+                        <span style={{ color: "#d97706" }}>■</span> <strong style={{ color: "#666" }}>GK ELEVATED</strong> (4.0%–4.8%) — above IWR but still within guardrails, monitor closely<br />
+                        <span style={{ color: "#dc2626" }}>■</span> <strong style={{ color: "#666" }}>CUT −10%</strong> (WR &gt; 4.8%) — Capital Preservation Rule fires, withdrawal cut by 10%
                       </div>
                     </div>
                   );
