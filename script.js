@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.4";
+const APP_VERSION = "20260505.5";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -656,7 +656,10 @@ function Dashboard() {
     incomeSurplusInvestPct;
   const incomeToInvest = netMonthlyCashflow > 0
     ? Math.round(netMonthlyCashflow * incomeInvestPct / 10) * 10 : 0;
-  const incomeToSpend = netMonthlyCashflow > 0 ? netMonthlyCashflow - incomeToInvest : 0;
+  const incomeToSpendRaw = netMonthlyCashflow > 0 ? netMonthlyCashflow - incomeToInvest : 0;
+  const incomeFunBudgetMo = effectiveAntiAtrophy / 12;
+  const incomeToSpend = Math.max(0, incomeToSpendRaw - incomeFunBudgetMo);
+  const incomeFunBudgetExceedsSpend = incomeFunBudgetMo > incomeToSpendRaw && incomeToSpendRaw > 0;
   const incomeTargetVWCE  = Math.max(phaseData.buckets.growth.floor     || 0, Math.round(portfolio * phaseData.buckets.growth.target     / 100));
   const incomeTargetXEON  = Math.max(phaseData.buckets.fortress.floor   || 0, Math.round(portfolio * phaseData.buckets.fortress.target   / 100));
   const incomeTargetFixed = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
@@ -1068,8 +1071,19 @@ function Dashboard() {
                         <div style={{ fontSize: 12, color: "#93c5fd" }}>Transfer to IBKR: <strong>€{incomeToInvest.toLocaleString()}</strong></div>
                         <div style={{ fontSize: 10, color: "#4a7ab5", marginTop: 3 }}>→ {incomeBucketRec.name} ({incomeBucketRec.reason}) · then update portfolio above</div>
                       </div>
-                      <div style={{ padding: "10px 12px", background: "#160b22", borderRadius: 6, borderLeft: "3px solid #b80aed" }}>
-                        <div style={{ fontSize: 12, color: "#d8b4fe" }}>Spend freely: <strong>€{incomeToSpend.toLocaleString()}</strong></div>
+                      <div style={{ padding: "10px 12px", background: "#160b22", borderRadius: 6, borderLeft: `3px solid ${incomeFunBudgetExceedsSpend ? "#f97316" : "#b80aed"}` }}>
+                        {incomeFunBudgetExceedsSpend ? (
+                          <div style={{ fontSize: 12, color: "#fdba74" }}>Fun budget (€{Math.round(incomeFunBudgetMo).toLocaleString()}/mo) covers your spend surplus — no extra discretionary headroom</div>
+                        ) : incomeToSpend > 0 ? (
+                          <>
+                            <div style={{ fontSize: 12, color: "#d8b4fe" }}>Spend freely: <strong>€{Math.round(incomeToSpend).toLocaleString()}</strong></div>
+                            {incomeFunBudgetMo > 0 && (
+                              <div style={{ fontSize: 10, color: "#7c3aed", marginTop: 3 }}>after €{Math.round(incomeFunBudgetMo).toLocaleString()}/mo fun budget already in expenses</div>
+                            )}
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12, color: "#7c3aed" }}>No extra discretionary headroom after investing &amp; fun budget</div>
+                        )}
                       </div>
                       <div style={{ padding: "8px 12px", background: "#0d0d0d", borderRadius: 6 }}>
                         <div style={{ fontSize: 10, color: "#555" }}>
