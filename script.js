@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260504.2";
+const APP_VERSION = "20260505.1";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -450,7 +450,6 @@ function Dashboard() {
 
   // ─── EFFECTIVE VALUES ───
   const effectiveMonthlyContrib = flags.employed        ? monthlyContrib  : 0;
-  const effectiveWifeIncome     = flags.extraIncome     ? wifeIncome      : 0;
   const effectiveApartmentRent  = flags.apartmentRental ? apartmentRent   : 0;
   const effectiveAntiAtrophy    = flags.funBudget       ? antiAtrophy     : 0;
   const effectiveTravelBudget   = flags.travelBudget    ? travelBudget    : 0;
@@ -458,10 +457,8 @@ function Dashboard() {
 
   // ─── OPTION MATRICES ───
   const plovGross = annualExpense + effectiveAntiAtrophy + effectiveSchoolCost;
-  const plovIncomeOffset = effectiveWifeIncome * 12;
-
   const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
-    const netDraw = Math.max(0, grossExpense - plovIncomeOffset - additionalIncome);
+    const netDraw = Math.max(0, grossExpense - additionalIncome);
     const taxDrag = bgTax10 ? netDraw * 0.5 * 0.10 : 0;
     return netDraw + taxDrag;
   };
@@ -483,7 +480,7 @@ function Dashboard() {
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
   const valBase = 36000;
-  const valTotal = Math.max(0, valBase + effectiveSchoolCost - plovIncomeOffset - netApartmentRent);
+  const valTotal = Math.max(0, valBase + effectiveSchoolCost - netApartmentRent);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
   // Runway
@@ -517,6 +514,23 @@ function Dashboard() {
   // ─── GK DERIVED STATE ───
   const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
   const currentGKWR = portfolio > 0 ? (effectiveBaseWithdrawal / portfolio) * 100 : 0;
+
+  // ─── INCOME ALLOCATION (per-event tool) ───
+  const incomeMonthlyBaseline = plovGross / 12;
+  const incomeWR = currentGKWR / 100;
+  const incomeSurplusInvestPct =
+    incomeWR < 0.032 ? 0.50 :
+    incomeWR < 0.040 ? 0.65 :
+    incomeWR < 0.048 ? 0.80 : 0.90;
+  const incomeInvestPct =
+    phase === 'employed' ? Math.min(incomeSurplusInvestPct + 0.10, 0.95) :
+    phase === 'laid_off' ? Math.min(incomeSurplusInvestPct + 0.05, 0.92) :
+    incomeSurplusInvestPct;
+  const incomePortfolioSaved = Math.min(wifeIncome, incomeMonthlyBaseline);
+  const incomeSurplus = Math.max(0, wifeIncome - incomeMonthlyBaseline);
+  const incomeToInvest = Math.round(incomeSurplus * incomeInvestPct / 10) * 10;
+  const incomeToSpend = incomeSurplus - incomeToInvest;
+  const incomeStillNeeded = Math.max(0, incomeMonthlyBaseline - wifeIncome);
 
   // Use independent portfolio value for the check panel so return magnitude is meaningful
   const checkPortfolio = gkCheckPortfolio > 0 ? gkCheckPortfolio : portfolio;
@@ -758,7 +772,6 @@ function Dashboard() {
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
                 <Slider label="IBKR Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
                 {flags.employed        && <Slider label="Monthly IBKR Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />}
-                {flags.extraIncome     && <Slider label="Side Work Income" value={wifeIncome} onChange={setWifeIncome} min={0} max={1500} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />}
                 {flags.apartmentRental && <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
                 {(flags.asenovgrad || flags.resort) && <div style={{ height: 1, background: "#222", margin: "16px 0" }} />}
                 {flags.asenovgrad      && <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />}
@@ -787,6 +800,45 @@ function Dashboard() {
                   </div>
                 )}
               </Card>
+
+              {flags.extraIncome && (
+                <Card highlight>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Side Income This Month</h3>
+                  <Slider label="Income This Month" value={wifeIncome} onChange={setWifeIncome} min={0} max={3000} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />
+                  {wifeIncome === 0 ? (
+                    <div style={{ marginTop: 12, padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, border: "1px solid #222" }}>
+                      <div style={{ fontSize: 11, color: "#555" }}>Enter income above to see how to allocate it.</div>
+                    </div>
+                  ) : incomeSurplus === 0 ? (
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ padding: "10px 12px", background: "#052e16", borderRadius: 6, borderLeft: "3px solid #22c55e" }}>
+                        <div style={{ fontSize: 12, color: "#86efac" }}>Reduces portfolio draw by <strong>€{Math.round(incomePortfolioSaved).toLocaleString()}</strong> this month</div>
+                      </div>
+                      <div style={{ padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, borderLeft: "3px solid #555" }}>
+                        <div style={{ fontSize: 12, color: "#888" }}>€{Math.round(incomeStillNeeded).toLocaleString()} still needed from portfolio this month</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ padding: "10px 12px", background: "#052e16", borderRadius: 6, borderLeft: "3px solid #22c55e" }}>
+                        <div style={{ fontSize: 12, color: "#86efac" }}>Covers all expenses this month ✓</div>
+                      </div>
+                      <div style={{ padding: "10px 12px", background: "#0c1a2e", borderRadius: 6, borderLeft: "3px solid #3b82f6" }}>
+                        <div style={{ fontSize: 12, color: "#93c5fd" }}>Transfer to IBKR: <strong>€{incomeToInvest.toLocaleString()}</strong></div>
+                        <div style={{ fontSize: 10, color: "#4a7ab5", marginTop: 3 }}>Then update your portfolio value above</div>
+                      </div>
+                      <div style={{ padding: "10px 12px", background: "#160b22", borderRadius: 6, borderLeft: "3px solid #b80aed" }}>
+                        <div style={{ fontSize: 12, color: "#d8b4fe" }}>Spend freely: <strong>€{incomeToSpend.toLocaleString()}</strong></div>
+                      </div>
+                      <div style={{ padding: "8px 12px", background: "#0d0d0d", borderRadius: 6 }}>
+                        <div style={{ fontSize: 10, color: "#555" }}>
+                          {getGKZoneStyle(incomeWR * 100).label} (WR {(incomeWR * 100).toFixed(1)}%) — {Math.round(incomeInvestPct * 100)}% of surplus to portfolio
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              )}
             </div>
 
             {/* GEOGRAPHIC ARBITRAGE COLUMN */}
