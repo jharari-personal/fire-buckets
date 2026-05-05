@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.1";
+const APP_VERSION = "20260505.2";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -335,7 +335,7 @@ function Dashboard() {
   const [phase, setPhase] = useState("employed");
 
   // Operating Levers
-  const [monthlyContrib, setMonthlyContrib] = useState(6000);
+  const [mainIncome, setMainIncome] = useState(6000);
   const [annualExpense, setAnnualExpense] = useState(20000);
   const [wifeIncome, setWifeIncome] = useState(0);
   const [schoolCost, setSchoolCost] = useState(0);
@@ -410,7 +410,8 @@ function Dashboard() {
       if (s) {
         if (s.portfolio) setPortfolio(s.portfolio);
         if (s.phase) setPhase(s.phase);
-        if (s.monthlyContrib !== undefined) setMonthlyContrib(s.monthlyContrib);
+        if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
+        else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
         if (s.annualExpense) setAnnualExpense(s.annualExpense);
         if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
         if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
@@ -436,20 +437,19 @@ function Dashboard() {
     if (!loaded) return;
     const t = setTimeout(() => {
       saveState({
-        portfolio, phase, monthlyContrib, annualExpense, wifeIncome,
+        portfolio, phase, mainIncome, annualExpense, wifeIncome,
         schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
         apartmentRent, resortCost, bgTax10, realReturn, flags,
         gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, monthlyContrib, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
+  }, [loaded, portfolio, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
 
   // ─── EFFECTIVE VALUES ───
-  const effectiveMonthlyContrib = flags.employed        ? monthlyContrib  : 0;
   const effectiveApartmentRent  = flags.apartmentRental ? apartmentRent   : 0;
   const effectiveAntiAtrophy    = flags.funBudget       ? antiAtrophy     : 0;
   const effectiveTravelBudget   = flags.travelBudget    ? travelBudget    : 0;
@@ -457,6 +457,11 @@ function Dashboard() {
 
   // ─── OPTION MATRICES ───
   const plovGross = annualExpense + effectiveAntiAtrophy + effectiveSchoolCost;
+
+  const effectiveMainIncome     = flags.employed    ? mainIncome  : 0;
+  const totalMonthlyIncome      = effectiveMainIncome + (flags.extraIncome ? wifeIncome : 0);
+  const netMonthlyCashflow      = totalMonthlyIncome - plovGross / 12;
+  const effectiveMonthlyContrib = Math.max(0, netMonthlyCashflow);
   const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
     const netDraw = Math.max(0, grossExpense - additionalIncome);
     const taxDrag = bgTax10 ? netDraw * 0.5 * 0.10 : 0;
@@ -515,8 +520,7 @@ function Dashboard() {
   const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
   const currentGKWR = portfolio > 0 ? (effectiveBaseWithdrawal / portfolio) * 100 : 0;
 
-  // ─── INCOME ALLOCATION (per-event tool) ───
-  const incomeMonthlyBaseline = plovGross / 12;
+  // ─── INCOME ALLOCATION ───
   const incomeWR = currentGKWR / 100;
   const incomeSurplusInvestPct =
     incomeWR < 0.032 ? 0.50 :
@@ -526,11 +530,12 @@ function Dashboard() {
     phase === 'employed' ? Math.min(incomeSurplusInvestPct + 0.10, 0.95) :
     phase === 'laid_off' ? Math.min(incomeSurplusInvestPct + 0.05, 0.92) :
     incomeSurplusInvestPct;
-  const incomePortfolioSaved = Math.min(wifeIncome, incomeMonthlyBaseline);
-  const incomeSurplus = Math.max(0, wifeIncome - incomeMonthlyBaseline);
-  const incomeToInvest = Math.round(incomeSurplus * incomeInvestPct / 10) * 10;
-  const incomeToSpend = incomeSurplus - incomeToInvest;
-  const incomeStillNeeded = Math.max(0, incomeMonthlyBaseline - wifeIncome);
+  const incomeToInvest = netMonthlyCashflow > 0
+    ? Math.round(netMonthlyCashflow * incomeInvestPct / 10) * 10 : 0;
+  const incomeToSpend = netMonthlyCashflow > 0 ? netMonthlyCashflow - incomeToInvest : 0;
+  const incomeBucketRec = incomeWR >= 0.040
+    ? { name: "XEON (Fortress B1)", reason: "shore up safety net" }
+    : { name: "VWCE (Growth B3)", reason: "keep compounding" };
 
   // Use independent portfolio value for the check panel so return magnitude is meaningful
   const checkPortfolio = gkCheckPortfolio > 0 ? gkCheckPortfolio : portfolio;
@@ -592,7 +597,7 @@ function Dashboard() {
 
   const runHash = `${phase}-${portfolio}-${annualExpense}-${antiAtrophy}-${schoolCost}-${wifeIncome}-${buildCost}-${resortCost}-${travelBudget}-${resortFees}-${bgTax10}-${apartmentRent}`;
   const allocHash = `${phase}-${portfolio}`;
-  const projHash = `${portfolio}-${monthlyContrib}-${realReturn}`;
+  const projHash = `${portfolio}-${mainIncome}-${wifeIncome}-${realReturn}`;
   const gkHash = `${portfolio}-${Math.round(effectiveBaseWithdrawal)}-${gkNominalReturn}-${gkInflation}`;
 
   const runTabFlash = useFlash(runHash, "tab");
@@ -771,7 +776,6 @@ function Dashboard() {
               <Card highlight>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
                 <Slider label="IBKR Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
-                {flags.employed        && <Slider label="Monthly IBKR Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />}
                 {flags.apartmentRental && <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
                 {(flags.asenovgrad || flags.resort) && <div style={{ height: 1, background: "#222", margin: "16px 0" }} />}
                 {flags.asenovgrad      && <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />}
@@ -801,31 +805,48 @@ function Dashboard() {
                 )}
               </Card>
 
-              {flags.extraIncome && (
+              {(flags.employed || flags.extraIncome) && (
                 <Card highlight>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Side Income This Month</h3>
-                  <Slider label="Income This Month" value={wifeIncome} onChange={setWifeIncome} min={0} max={3000} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />
-                  {wifeIncome === 0 ? (
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Income &amp; Cash Flow This Month</h3>
+                  {flags.employed && (
+                    <Slider label="Monthly Salary" value={mainIncome} onChange={setMainIncome} min={0} max={10000} step={100} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+                  )}
+                  {flags.extraIncome && (
+                    <Slider label="Side Income This Month" value={wifeIncome} onChange={setWifeIncome} min={0} max={3000} step={50} color="#b80aed" format={v => `€${v}`} suffix="/mo" />
+                  )}
+                  {flags.employed && flags.extraIncome && totalMonthlyIncome > 0 && (
+                    <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, color: "#555" }}>
+                      Salary €{mainIncome.toLocaleString()} + side €{wifeIncome.toLocaleString()} = €{totalMonthlyIncome.toLocaleString()}/mo total
+                    </div>
+                  )}
+                  {totalMonthlyIncome === 0 ? (
                     <div style={{ marginTop: 12, padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, border: "1px solid #222" }}>
                       <div style={{ fontSize: 11, color: "#555" }}>Enter income above to see how to allocate it.</div>
                     </div>
-                  ) : incomeSurplus === 0 ? (
+                  ) : netMonthlyCashflow < 0 ? (
                     <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ padding: "10px 12px", background: "#052e16", borderRadius: 6, borderLeft: "3px solid #22c55e" }}>
-                        <div style={{ fontSize: 12, color: "#86efac" }}>Reduces portfolio draw by <strong>€{Math.round(incomePortfolioSaved).toLocaleString()}</strong> this month</div>
+                      <div style={{ padding: "10px 12px", background: "#2d1515", borderRadius: 6, borderLeft: "3px solid #dc2626" }}>
+                        <div style={{ fontSize: 12, color: "#fca5a5" }}>Need from portfolio: <strong>€{Math.round(Math.abs(netMonthlyCashflow)).toLocaleString()}/mo</strong></div>
                       </div>
                       <div style={{ padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, borderLeft: "3px solid #555" }}>
-                        <div style={{ fontSize: 12, color: "#888" }}>€{Math.round(incomeStillNeeded).toLocaleString()} still needed from portfolio this month</div>
+                        <div style={{ fontSize: 11, color: "#666" }}>
+                          Expenses €{Math.round(plovGross / 12).toLocaleString()}/mo · Income €{Math.round(totalMonthlyIncome).toLocaleString()}/mo
+                        </div>
+                      </div>
+                      <div style={{ padding: "8px 12px", background: "#0d0d0d", borderRadius: 6 }}>
+                        <div style={{ fontSize: 10, color: "#555" }}>
+                          {getGKZoneStyle(incomeWR * 100).label} (WR {(incomeWR * 100).toFixed(1)}%)
+                        </div>
                       </div>
                     </div>
                   ) : (
                     <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
                       <div style={{ padding: "10px 12px", background: "#052e16", borderRadius: 6, borderLeft: "3px solid #22c55e" }}>
-                        <div style={{ fontSize: 12, color: "#86efac" }}>Covers all expenses this month ✓</div>
+                        <div style={{ fontSize: 12, color: "#86efac" }}>Expenses covered ✓ <span style={{ color: "#4ade80", fontWeight: 600 }}>€{Math.round(plovGross / 12).toLocaleString()}/mo</span></div>
                       </div>
                       <div style={{ padding: "10px 12px", background: "#0c1a2e", borderRadius: 6, borderLeft: "3px solid #3b82f6" }}>
                         <div style={{ fontSize: 12, color: "#93c5fd" }}>Transfer to IBKR: <strong>€{incomeToInvest.toLocaleString()}</strong></div>
-                        <div style={{ fontSize: 10, color: "#4a7ab5", marginTop: 3 }}>Then update your portfolio value above</div>
+                        <div style={{ fontSize: 10, color: "#4a7ab5", marginTop: 3 }}>→ {incomeBucketRec.name} ({incomeBucketRec.reason}) · then update portfolio above</div>
                       </div>
                       <div style={{ padding: "10px 12px", background: "#160b22", borderRadius: 6, borderLeft: "3px solid #b80aed" }}>
                         <div style={{ fontSize: 12, color: "#d8b4fe" }}>Spend freely: <strong>€{incomeToSpend.toLocaleString()}</strong></div>
@@ -1045,7 +1066,19 @@ function Dashboard() {
           <div style={{ marginBottom: 28 }}>
             <Card highlight style={{ marginBottom: 16 }}>
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 14px" }}>Projection Inputs</h3>
-              <Slider label="Monthly Contributions" value={monthlyContrib} onChange={setMonthlyContrib} min={0} max={10000} step={500} color="#2563eb" format={v => `€${v.toLocaleString()}`} suffix="/mo" />
+              <div style={{ marginBottom: 16, padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, borderLeft: "3px solid #2563eb" }}>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>Monthly IBKR Contribution (calculated)</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: effectiveMonthlyContrib > 0 ? "#93c5fd" : "#555" }}>
+                  €{Math.round(effectiveMonthlyContrib).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: "#555" }}>/mo</span>
+                </div>
+                <div style={{ fontSize: 10, color: "#444", marginTop: 4 }}>
+                  {effectiveMonthlyContrib > 0
+                    ? `Income €${Math.round(totalMonthlyIncome).toLocaleString()} − Expenses €${Math.round(plovGross / 12).toLocaleString()} = €${Math.round(netMonthlyCashflow).toLocaleString()} surplus`
+                    : flags.employed || flags.extraIncome
+                      ? `Income €${Math.round(totalMonthlyIncome).toLocaleString()} covered by expenses — no surplus to invest`
+                      : "No income flags active — set income in the Runway & Levers tab"}
+                </div>
+              </div>
               <Slider label="Expected Real Return" value={realReturn} onChange={setRealReturn} min={2} max={10} step={0.5} color="#059669" format={v => `${v.toFixed(1)}`} suffix="% / yr" />
               <div style={{ fontSize: 10, color: "#555", marginTop: -8 }}>
                 5% real = ~7-8% nominal minus 2-3% inflation. Conservative for 80%+ equity.
@@ -1055,7 +1088,7 @@ function Dashboard() {
             <Card style={{ marginBottom: 16 }}>
               <h3 style={{ fontSize: 13, fontWeight: 700, color: "#fff", margin: "0 0 12px" }}>Time to FIRE Milestones</h3>
               <div style={{ fontSize: 10, color: "#555", marginBottom: 12 }}>
-                {effectiveMonthlyContrib > 0 ? `Assumes €${effectiveMonthlyContrib.toLocaleString()}/mo contributions (Employed flag is on).` : "No contributions — Employed flag is off. Portfolio growth only."}
+                {effectiveMonthlyContrib > 0 ? `Assumes €${Math.round(effectiveMonthlyContrib).toLocaleString()}/mo net contributions (income minus expenses).` : "No net surplus — portfolio growth only."}
               </div>
 
               <ProjectionRow label="Lean FIRE" months={projections.p500} target={500000} color="#2563eb" />
