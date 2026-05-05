@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.2";
+const APP_VERSION = "20260505.3";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -145,7 +145,7 @@ const PHASES = {
 const BUCKET_META = {
   growth:     { label: "Growth (VWCE)",  inst: "VWCE", color: "#2563eb", short: "Compounding machine. Never sell in drawdowns." },
   fortress:   { label: "Safety (XEON)",  inst: "XEON (€STR ~2.3%)",        color: "#059669", short: "GK B1 — 2yr liquidity. Layoff runway years 0–2." },
-  termShield: { label: "Runway (29GA)",  inst: "29GA → successor bond ETF", color: "#d97706", short: "GK B2 — 5yr stability. Refill B1." },
+  termShield: { label: "Fixed Income (B2)", inst: "Bonds / Bond ETF", color: "#d97706", short: "GK B2 — 5yr stability. Refill B1." },
   cash:       { label: "Cash",           inst: "EUR cash at IBKR",          color: "#6b7280", short: "DCA buffer or opportunity fund." },
 };
 
@@ -268,14 +268,26 @@ function Card({ children, style = {}, highlight = false }) {
   );
 }
 
-function BucketRow({ bucketKey, alloc, portfolioValue }) {
+function BucketRow({ bucketKey, alloc, portfolioValue, actualEur }) {
   const m = BUCKET_META[bucketKey];
-  const eurVal = Math.round(portfolioValue * alloc.target / 100);
-  const floorActive = alloc.floor && eurVal < alloc.floor;
-  const effectiveEur = floorActive ? alloc.floor : eurVal;
-  const pct = Math.min((alloc.target / 100) * 100, 100);
+  const targetEur = Math.round(portfolioValue * alloc.target / 100);
+  const floorActive = alloc.floor && targetEur < alloc.floor;
+  const effectiveTarget = floorActive ? alloc.floor : targetEur;
 
-  const valFlash = useFlash(effectiveEur, "text");
+  const hasActual = actualEur !== undefined;
+  const displayEur = hasActual ? actualEur : effectiveTarget;
+  const fillPct = hasActual && effectiveTarget > 0
+    ? Math.min(100, (actualEur / effectiveTarget) * 100)
+    : alloc.target;
+
+  const status = hasActual
+    ? actualEur >= effectiveTarget ? "ON TARGET"
+    : actualEur >= effectiveTarget * 0.85 ? "CLOSE"
+    : "SHORT"
+    : null;
+  const statusColor = status === "ON TARGET" ? "#059669" : status === "CLOSE" ? "#d97706" : "#dc2626";
+
+  const valFlash = useFlash(displayEur, "text");
   const pctFlash = useFlash(alloc.target, "text");
 
   return (
@@ -285,16 +297,22 @@ function BucketRow({ bucketKey, alloc, portfolioValue }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: "#eee" }}>{m.label}</span>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 11, color: valFlash.color || "#666", fontFamily: "monospace", transition: valFlash.transition, textShadow: valFlash.textShadow }}>€{effectiveEur.toLocaleString()}</span>
+            <span style={{ fontSize: 11, color: valFlash.color || "#666", fontFamily: "monospace", transition: valFlash.transition, textShadow: valFlash.textShadow }}>
+              €{displayEur.toLocaleString()}
+              {hasActual && <span style={{ color: "#444" }}> / €{effectiveTarget.toLocaleString()}</span>}
+            </span>
             <span style={{ fontSize: 17, fontWeight: 700, color: pctFlash.color || m.color, fontFamily: "monospace", transition: pctFlash.transition, textShadow: pctFlash.textShadow }}>{alloc.target}%</span>
           </div>
         </div>
         <div style={{ width: "100%", height: 4, background: "#1a1a1a", borderRadius: 2, marginTop: 6 }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: m.color, borderRadius: 2, transition: "width 0.4s ease" }} />
+          <div style={{ width: `${fillPct}%`, height: "100%", background: m.color, borderRadius: 2, transition: "width 0.4s ease" }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
           <span style={{ fontSize: 11, color: "#666" }}>{alloc.note}</span>
-          {floorActive && <span style={{ fontSize: 10, color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>FLOOR OVERRIDE</span>}
+          <div style={{ display: "flex", gap: 6 }}>
+            {floorActive && <span style={{ fontSize: 10, color: "#f87171", fontWeight: 700, fontFamily: "monospace" }}>FLOOR OVERRIDE</span>}
+            {status && <span style={{ fontSize: 10, color: statusColor, fontWeight: 700, fontFamily: "monospace" }}>{status}</span>}
+          </div>
         </div>
       </div>
     </div>
@@ -331,7 +349,10 @@ function Dashboard() {
   const { width } = useWindowSize();
   const isMobile = width <= 768;
 
-  const [portfolio, setPortfolio] = useState(470000);
+  const [bucketVWCE,  setBucketVWCE]  = useState(394800);
+  const [bucketXEON,  setBucketXEON]  = useState(32900);
+  const [bucketFixed, setBucketFixed] = useState(23500);
+  const [bucketCash,  setBucketCash]  = useState(18800);
   const [phase, setPhase] = useState("employed");
 
   // Operating Levers
@@ -408,7 +429,23 @@ function Dashboard() {
     (async () => {
       const s = await loadState();
       if (s) {
-        if (s.portfolio) setPortfolio(s.portfolio);
+        if (s.bucketVWCE !== undefined) {
+          setBucketVWCE(s.bucketVWCE);
+          setBucketXEON(s.bucketXEON);
+          setBucketFixed(s.bucketFixed);
+          setBucketCash(s.bucketCash);
+        } else if (s.portfolio) {
+          // Migrate single portfolio value → split by saved phase targets
+          const pd = PHASES[s.phase || "employed"];
+          const t = s.portfolio;
+          const v = Math.round(t * pd.buckets.growth.target / 100);
+          const x = Math.round(t * pd.buckets.fortress.target / 100);
+          const f = Math.round(t * pd.buckets.termShield.target / 100);
+          setBucketVWCE(v);
+          setBucketXEON(x);
+          setBucketFixed(f);
+          setBucketCash(t - v - x - f);
+        }
         if (s.phase) setPhase(s.phase);
         if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
         else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
@@ -437,14 +474,17 @@ function Dashboard() {
     if (!loaded) return;
     const t = setTimeout(() => {
       saveState({
-        portfolio, phase, mainIncome, annualExpense, wifeIncome,
+        bucketVWCE, bucketXEON, bucketFixed, bucketCash,
+        phase, mainIncome, annualExpense, wifeIncome,
         schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
         apartmentRent, resortCost, bgTax10, realReturn, flags,
         gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
       });
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, portfolio, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
+  }, [loaded, bucketVWCE, bucketXEON, bucketFixed, bucketCash, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
+
+  const portfolio = bucketVWCE + bucketXEON + bucketFixed + bucketCash;
 
   const phaseData = PHASES[phase];
   const bucketKeys = ["growth", "fortress", "termShield", "cash"];
@@ -533,9 +573,20 @@ function Dashboard() {
   const incomeToInvest = netMonthlyCashflow > 0
     ? Math.round(netMonthlyCashflow * incomeInvestPct / 10) * 10 : 0;
   const incomeToSpend = netMonthlyCashflow > 0 ? netMonthlyCashflow - incomeToInvest : 0;
-  const incomeBucketRec = incomeWR >= 0.040
-    ? { name: "XEON (Fortress B1)", reason: "shore up safety net" }
-    : { name: "VWCE (Growth B3)", reason: "keep compounding" };
+  const incomeTargetVWCE  = Math.max(phaseData.buckets.growth.floor     || 0, Math.round(portfolio * phaseData.buckets.growth.target     / 100));
+  const incomeTargetXEON  = Math.max(phaseData.buckets.fortress.floor   || 0, Math.round(portfolio * phaseData.buckets.fortress.target   / 100));
+  const incomeTargetFixed = Math.max(phaseData.buckets.termShield.floor || 0, Math.round(portfolio * phaseData.buckets.termShield.target / 100));
+  const incomeBucketOptions = [
+    { name: "VWCE (Growth B3)",      shortfall: Math.max(0, incomeTargetVWCE  - bucketVWCE),  target: incomeTargetVWCE  },
+    { name: "XEON (Fortress B1)",    shortfall: Math.max(0, incomeTargetXEON  - bucketXEON),  target: incomeTargetXEON  },
+    { name: "Fixed Income (B2)",     shortfall: Math.max(0, incomeTargetFixed - bucketFixed), target: incomeTargetFixed },
+  ];
+  const incomeMostShort = incomeBucketOptions.reduce((a, b) =>
+    (b.target > 0 ? b.shortfall / b.target : 0) > (a.target > 0 ? a.shortfall / a.target : 0) ? b : a
+  );
+  const incomeBucketRec = incomeMostShort.shortfall > 0
+    ? { name: incomeMostShort.name, reason: `€${Math.round(incomeMostShort.shortfall).toLocaleString()} below target` }
+    : { name: "VWCE (Growth B3)", reason: "all buckets on target — keep compounding" };
 
   // Use independent portfolio value for the check panel so return magnitude is meaningful
   const checkPortfolio = gkCheckPortfolio > 0 ? gkCheckPortfolio : portfolio;
@@ -681,22 +732,6 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* PHASE SELECTOR */}
-        <div style={{ display: "flex", gap: isMobile ? 8 : 6, marginBottom: 20, flexWrap: "wrap" }}>
-          {Object.entries(PHASES).map(([key, p]) => (
-            <button key={key} onClick={() => setPhase(key)} style={{
-              padding: isMobile ? "10px 14px" : "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
-              border: phase === key ? "1px solid #fff" : "1px solid #222",
-              background: phase === key ? "#fff" : "transparent",
-              color: phase === key ? "#000" : "#666",
-              fontSize: 12, fontWeight: phase === key ? 700 : 500,
-              transition: "all 0.15s", flex: isMobile ? "1 1 calc(50% - 8px)" : "initial"
-            }}>
-              <span style={{ marginRight: 5, opacity: 0.6 }}>{p.icon}</span>{p.label}
-            </button>
-          ))}
-        </div>
-
         {/* ACTIVE SITUATION FLAGS */}
         <div style={{ background: "#0d0d0d", border: "1px solid #1a1a1a", borderRadius: 8, padding: "12px 14px", marginBottom: 20 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "#444", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "monospace", marginBottom: 10 }}>
@@ -775,7 +810,14 @@ function Dashboard() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <Card highlight>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>Capital Levers</h3>
-                <Slider label="IBKR Portfolio Value" value={portfolio} onChange={setPortfolio} min={200000} max={1000000} step={5000} color="#fff" format={v => `€${v.toLocaleString()}`} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12, paddingBottom: 10, borderBottom: "1px solid #222" }}>
+                  <span style={{ fontSize: 11, color: "#888" }}>Total IBKR Portfolio</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "monospace" }}>€{portfolio.toLocaleString()}</span>
+                </div>
+                <Slider label="VWCE (Growth B3)" value={bucketVWCE} onChange={setBucketVWCE} min={0} max={800000} step={1000} color="#2563eb" format={v => `€${v.toLocaleString()}`} />
+                <Slider label="XEON (Fortress B1)" value={bucketXEON} onChange={setBucketXEON} min={0} max={150000} step={500} color="#059669" format={v => `€${v.toLocaleString()}`} />
+                <Slider label="Fixed Income (B2)" value={bucketFixed} onChange={setBucketFixed} min={0} max={250000} step={500} color="#d97706" format={v => `€${v.toLocaleString()}`} />
+                <Slider label="EUR Cash" value={bucketCash} onChange={setBucketCash} min={0} max={80000} step={500} color="#6b7280" format={v => `€${v.toLocaleString()}`} />
                 {flags.apartmentRental && <Slider label="Plovdiv Apt Rental Yield" value={apartmentRent} onChange={setApartmentRent} min={0} max={25000} step={600} color="#10b981" format={v => `€${v.toLocaleString()}`} suffix="/yr" />}
                 {(flags.asenovgrad || flags.resort) && <div style={{ height: 1, background: "#222", margin: "16px 0" }} />}
                 {flags.asenovgrad      && <Slider label="Asenovgrad Build Cost" value={buildCost} onChange={setBuildCost} min={150000} max={400000} step={10000} color="#f59e0b" format={v => `€${v.toLocaleString()}`} />}
@@ -960,6 +1002,31 @@ function Dashboard() {
         {/* TAB: ALLOCATOR */}
         {tab === "allocator" && (
           <div style={{ marginBottom: 28 }}>
+
+            {/* PHASE SELECTOR */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#444", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "monospace", marginBottom: 10 }}>
+                Life Phase — sets bucket allocation targets and floor amounts
+              </div>
+              <div style={{ display: "flex", gap: isMobile ? 8 : 6, flexWrap: "wrap" }}>
+                {Object.entries(PHASES).map(([key, p]) => (
+                  <button key={key} onClick={() => setPhase(key)} style={{
+                    padding: isMobile ? "10px 14px" : "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+                    border: phase === key ? "1px solid #fff" : "1px solid #222",
+                    background: phase === key ? "#fff" : "transparent",
+                    color: phase === key ? "#000" : "#666",
+                    fontSize: 12, fontWeight: phase === key ? 700 : 500,
+                    transition: "all 0.15s", flex: isMobile ? "1 1 calc(50% - 8px)" : "initial"
+                  }}>
+                    <span style={{ marginRight: 5, opacity: 0.6 }}>{p.icon}</span>{p.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: "#555" }}>
+                {phaseData.subtitle}
+              </div>
+            </div>
+
             <div style={{ display: "flex", height: 28, borderRadius: 6, overflow: "hidden", border: "1px solid #222", marginBottom: 16 }}>
               {bucketKeys.map(k => {
                 const t = phaseData.buckets[k].target;
@@ -984,7 +1051,10 @@ function Dashboard() {
             </div>
 
             <Card>
-              {bucketKeys.map(k => <BucketRow key={k} bucketKey={k} alloc={phaseData.buckets[k]} portfolioValue={portfolio} />)}
+              {bucketKeys.map(k => {
+                const actualMap = { growth: bucketVWCE, fortress: bucketXEON, termShield: bucketFixed, cash: bucketCash };
+                return <BucketRow key={k} bucketKey={k} alloc={phaseData.buckets[k]} portfolioValue={portfolio} actualEur={actualMap[k]} />;
+              })}
             </Card>
 
             {/* GK BUCKET TARGETS — shown for decumulation phases */}
