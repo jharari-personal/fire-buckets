@@ -10,7 +10,7 @@ A single-user personal financial planning PWA (Progressive Web App) for managing
 
 Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so static files are served as-is.
 
-**After any change, bump `APP_VERSION`** in `script.js` (format: `YYYYMMDD.N`, e.g. `"20260505.5"`). This invalidates the service worker cache so users get the updated files immediately.
+**After any change, bump `APP_VERSION`** in `script.js` (format: `YYYYMMDD.N`, e.g. `"20260505.7"`). This invalidates the service worker cache so users get the updated files immediately.
 
 ## GitHub CLI
 
@@ -26,7 +26,7 @@ All logic lives in `script.js`. The file is structured in four layers:
 
 ### 1. Constants & Configuration (top of file)
 - `GK_CONFIG` — Guyton-Klinger parameters: `IWR` 4.0%, `UPPER_GUARDRAIL` 3.2% (Prosperity), `LOWER_GUARDRAIL` 4.8% (Capital Preservation), `ADJUSTMENT` 10%, `INFLATION_CAP` 6%
-- `FIRE_TARGETS` — portfolio thresholds: aggressive (550k), recommended (625k), bulletproof (700k)
+- `FIRE_TARGETS` — legacy constant (550k/625k/700k); **no longer used in calculations or display** — all FIRE targets are now derived dynamically from `plovTotal` (see Projection tab below). `FIRE_TARGETS` remains only in the static `TRIGGERS` array descriptions.
 - `PHASES` — 4 life phases (`employed`, `laid_off`, `lean_fire`, `full_fire`), each with bucket allocation targets and floor amounts. `full_fire` floors reflect GK bucket minimums: fortress €44k (B1, 2yr expenses), termShield €110k (B2, 5yr expenses)
 - `BUCKET_META` — metadata for 4 investment buckets: VWCE (growth/B3), XEON (fortress/B1), Fixed Income (B2, instrument-agnostic — currently 29GA bond maturing March 2029), EUR cash at IBKR
 - `TRIGGERS` — 10 event-driven decision rules with urgency levels
@@ -52,7 +52,7 @@ All logic lives in `script.js`. The file is structured in four layers:
 ### 4. Tabs
 - **Runway & Levers** — expense/income sliders, geographic arbitrage scenario cards with GK-labeled SWR badges, situation flags panel; **Income & Cash Flow card** (visible when `employed` or `extraIncome` flag is on) with Monthly Salary slider (employed only), Side Income slider (extraIncome only), and invest/spend allocation output
 - **Allocation** — phase selector (moved here from Runway); Capital Levers with 4 individual per-bucket sliders (VWCE, XEON, Fixed Income B2, EUR Cash) — total is derived and displayed; 4-bucket bar with `BucketRow` breakdown; GK 3-Bucket Targets card (B1/B2/B3 with ON TARGET / SHORT / OVER status) shown for `full_fire` and `lean_fire` phases
-- **Projection** — time-to-FIRE milestones + layoff scenario; GK Post-FIRE Sustainability card showing portfolio at years 10/20/30/40/50 from the €625k FIRE target; monthly contribution is shown as a read-only calculated value (derived from income − expenses)
+- **Projection** — time-to-FIRE milestones (4 IWR-derived targets: 4.5% Lean, 4.0% Aggressive, 3.5% Recommended, 3.0% Bulletproof) + layoff scenario; all targets derived dynamically from `plovTotal` — changing expenses immediately updates every milestone and the progress bar. GK Post-FIRE Sustainability card simulates from the **current portfolio** (not a hardcoded target) using `gkNominalReturn` and `gkInflation` from the Withdrawals tab, showing portfolio at years 10/20/30/40/50. Monthly contribution is shown as a read-only calculated value (derived from income − expenses).
 - **Withdrawals** — GK rules overview; this-year withdrawal check (last year's return + this year's inflation → recommended withdrawal with trigger); base withdrawal slider; 40-year simulation table; year-by-year withdrawal history log with "Record Year" form
 
 ### State (localStorage key: `"harari-dashboard-state"`)
@@ -78,7 +78,7 @@ Cache name uses `APP_VERSION`. Cache-first strategy; on activation, deletes old 
 
 - All monetary values are **EUR**
 - Real return default: **5%** (≈7-8% nominal minus inflation). GK simulation uses nominal return + inflation as separate inputs
-- Withdrawal model: **Guyton-Klinger** with IWR 4.0% at the €625k recommended threshold (replaces static 3.5% SWR)
+- Withdrawal model: **Guyton-Klinger** with IWR 4.0% as the baseline rate (replaces static 3.5% SWR)
 - GK guardrails: raise 10% if WR < 3.2%; cut 10% if WR > 4.8%; skip annual inflation raise after a negative-return year
 - Income is **not** baked into scenario net draw — geographic scenario cards always show gross portfolio draw. Income is handled as a per-event tool in the Income & Cash Flow card:
   - Derived: `effectiveMainIncome = employed ? mainIncome : 0`; `totalMonthlyIncome = effectiveMainIncome + (extraIncome ? wifeIncome : 0)`
@@ -87,6 +87,12 @@ Cache name uses `APP_VERSION`. Cache-first strategy; on activation, deletes old 
   - Surplus invest/spend split by GK zone: 50/65/80/90% to portfolio for RAISE/SAFE/ELEVATED/CUT; +10% toward invest in `employed` phase, +5% in `laid_off`
   - `incomeToSpend` deducts `effectiveAntiAtrophy / 12` from the raw spend surplus to avoid double-counting (fun budget is already in expenses via `plovGross`). If the fun budget fully absorbs the surplus, an orange warning is shown instead of spend permission
   - User manually updates bucket sliders after investing; income does not feed into projections as a long-term assumption
+- **FIRE targets are derived from `plovTotal` (actual after-tax annual draw), not hardcoded:**
+  - `fireTargetLean        = plovTotal / 0.045` (4.5% IWR)
+  - `fireTargetAggressive  = plovTotal / 0.040` (4.0% GK IWR)
+  - `fireTargetRecommended = plovTotal / 0.035` (3.5% IWR, GK safe zone entry)
+  - `fireTargetBulletproof = plovTotal / 0.030` (3.0% IWR)
+  - These drive: all `ProjectionRow` milestone targets, `fireGap`, `fireProgress`, the progress bar, the layoff scenario, and the Withdrawals tab IWR example. Never hardcode a portfolio threshold — use these derived values.
 - Bucket recommendation uses actual bucket EUR values vs phase allocation targets; the most-underfunded bucket by % shortfall is recommended, falling back to VWCE when all buckets are on target
 - Tax: Bulgarian CGT is 0% or 10% (toggled), Spanish Beckham Law = 0% CGT for 6 years
 - No external state management — React `useState` + localStorage only
