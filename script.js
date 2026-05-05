@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.5";
+const APP_VERSION = "20260505.6";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -421,6 +421,7 @@ function Dashboard() {
   const [syncError, setSyncError]       = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [tokenInput, setTokenInput]     = useState("");
+  const [gistIdInput, setGistIdInput]   = useState("");
 
   // ─── SITUATION FLAGS ───
   const [flags, setFlags] = useState({
@@ -478,7 +479,7 @@ function Dashboard() {
       const savedToken = localStorage.getItem("harari-gh-token") || "";
       const savedGistId = localStorage.getItem("harari-gist-id") || "";
       if (savedToken) { setGhToken(savedToken); setTokenInput(savedToken); }
-      if (savedGistId) setGistId(savedGistId);
+      if (savedGistId) { setGistId(savedGistId); setGistIdInput(savedGistId); }
 
       // Try Gist first, fall back to localStorage
       let s = null;
@@ -549,14 +550,10 @@ function Dashboard() {
     };
     const t = setTimeout(async () => {
       saveState(state); // localStorage backup always
-      if (ghToken) {
+      if (ghToken && gistId) {
         setSyncStatus("syncing");
         try {
-          const newId = await saveToGist(ghToken, gistId, state);
-          if (newId !== gistId) {
-            setGistId(newId);
-            localStorage.setItem("harari-gist-id", newId);
-          }
+          await saveToGist(ghToken, gistId, state);
           setSyncStatus("ok");
           setSyncError("");
         } catch (e) {
@@ -744,30 +741,75 @@ function Dashboard() {
   const gkTabFlash = useFlash(gkHash, "tab");
 
   // ─── GIST CONNECT HANDLER ───
+  const handleDisconnectGist = () => {
+    localStorage.removeItem("harari-gh-token");
+    localStorage.removeItem("harari-gist-id");
+    setGhToken(""); setGistId(""); setTokenInput(""); setGistIdInput("");
+    setSyncStatus("local"); setSyncError("");
+  };
+
   const handleConnectGist = async () => {
     const token = tokenInput.trim();
-    if (!token) {
-      // Disconnect
-      localStorage.removeItem("harari-gh-token");
-      localStorage.removeItem("harari-gist-id");
-      setGhToken(""); setGistId(""); setSyncStatus("local"); setSyncError("");
-      return;
-    }
+    const id = gistIdInput.trim();
+    if (!token) { handleDisconnectGist(); return; }
+
     localStorage.setItem("harari-gh-token", token);
     setGhToken(token);
-    setSyncStatus("syncing");
+    setSyncStatus("loading");
+    setSyncError("");
+
     try {
-      const state = {
-        bucketVWCE, bucketXEON, bucketFixed, bucketCash,
-        phase, mainIncome, annualExpense, wifeIncome,
-        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
-        apartmentRent, resortCost, bgTax10, realReturn, flags,
-        gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
-      };
-      const newId = await saveToGist(token, gistId, state);
-      setGistId(newId);
-      localStorage.setItem("harari-gist-id", newId);
-      setSyncStatus("ok"); setSyncError("");
+      if (id) {
+        // Existing Gist — load cloud state immediately, cloud wins completely
+        const s = await loadFromGist(token, id);
+        setGistId(id);
+        localStorage.setItem("harari-gist-id", id);
+        if (s.bucketVWCE !== undefined) {
+          setBucketVWCE(s.bucketVWCE); setBucketXEON(s.bucketXEON);
+          setBucketFixed(s.bucketFixed); setBucketCash(s.bucketCash);
+        } else if (s.portfolio) {
+          const pd = PHASES[s.phase || "employed"];
+          const t = s.portfolio;
+          const v = Math.round(t * pd.buckets.growth.target / 100);
+          const x = Math.round(t * pd.buckets.fortress.target / 100);
+          const f = Math.round(t * pd.buckets.termShield.target / 100);
+          setBucketVWCE(v); setBucketXEON(x); setBucketFixed(f); setBucketCash(t - v - x - f);
+        }
+        if (s.phase) setPhase(s.phase);
+        if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
+        else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
+        if (s.annualExpense) setAnnualExpense(s.annualExpense);
+        if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
+        if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
+        if (s.antiAtrophy !== undefined) setAntiAtrophy(s.antiAtrophy);
+        if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
+        if (s.resortFees !== undefined) setResortFees(s.resortFees);
+        if (s.buildCost !== undefined) setBuildCost(s.buildCost);
+        if (s.apartmentRent !== undefined) setApartmentRent(s.apartmentRent);
+        if (s.resortCost !== undefined) setResortCost(s.resortCost);
+        if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
+        if (s.realReturn !== undefined) setRealReturn(s.realReturn);
+        if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
+        if (s.gkBaseWithdrawal !== undefined) setGkBaseWithdrawal(s.gkBaseWithdrawal);
+        if (s.gkNominalReturn !== undefined) setGkNominalReturn(s.gkNominalReturn);
+        if (s.gkInflation !== undefined) setGkInflation(s.gkInflation);
+        if (s.gkHistory) setGkHistory(s.gkHistory);
+        setSyncStatus("ok");
+      } else {
+        // No Gist ID yet — first-time setup: create a new Gist with current state
+        const state = {
+          bucketVWCE, bucketXEON, bucketFixed, bucketCash,
+          phase, mainIncome, annualExpense, wifeIncome,
+          schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
+          apartmentRent, resortCost, bgTax10, realReturn, flags,
+          gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
+        };
+        const newId = await saveToGist(token, "", state);
+        setGistId(newId);
+        setGistIdInput(newId);
+        localStorage.setItem("harari-gist-id", newId);
+        setSyncStatus("ok");
+      }
     } catch (e) {
       setSyncError(e.message); setSyncStatus("error");
     }
@@ -938,23 +980,34 @@ function Dashboard() {
         {/* SETTINGS PANEL */}
         {showSettings && (
           <div style={{ padding: "16px", background: "#111", border: "1px solid #222", borderTop: "none", borderRadius: "0 0 8px 8px", marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 12 }}>Cloud Sync — GitHub Gist</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Cloud Sync — GitHub Gist</div>
             <div style={{ fontSize: 11, color: "#555", marginBottom: 12, lineHeight: 1.6 }}>
-              State syncs to a private GitHub Gist so it persists across devices and browsers.
-              Create a <strong style={{ color: "#888" }}>fine-grained personal access token</strong> at{" "}
-              <span style={{ color: "#3b82f6", fontFamily: "monospace" }}>github.com/settings/tokens</span> with{" "}
-              <strong style={{ color: "#888" }}>Gists: read &amp; write</strong> permission.
+              Generate a <strong style={{ color: "#888" }}>classic personal access token</strong> at{" "}
+              <span style={{ color: "#3b82f6", fontFamily: "monospace" }}>github.com/settings/tokens</span>{" "}
+              (not fine-grained — fine-grained tokens don't support Gists) with <strong style={{ color: "#888" }}>gist</strong> scope. Token starts with <span style={{ fontFamily: "monospace", color: "#888" }}>ghp_</span>.
+              On a new device, enter your token <em>and</em> the Gist ID — the app will pull cloud state immediately.
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <input
                 type="password"
                 value={tokenInput}
                 onChange={e => setTokenInput(e.target.value)}
-                placeholder="github_pat_…"
+                placeholder="ghp_… (GitHub classic PAT)"
                 style={{
                   flex: 1, padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
-                  borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace",
-                  outline: "none",
+                  borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                type="text"
+                value={gistIdInput}
+                onChange={e => setGistIdInput(e.target.value)}
+                placeholder="Gist ID (leave blank to create new on first device)"
+                style={{
+                  flex: 1, padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                  borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
                 }}
               />
               <button onClick={handleConnectGist} style={{
@@ -962,19 +1015,26 @@ function Dashboard() {
                 border: "none", borderRadius: 6, color: "#fff", fontSize: 12,
                 fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
               }}>
-                {ghToken ? "Update" : "Connect"}
+                {gistId ? (gistIdInput.trim() !== gistId ? "Switch" : "Reload") : "Connect"}
               </button>
               {ghToken && (
-                <button onClick={() => { setTokenInput(""); handleConnectGist(); }} style={{
+                <button onClick={handleDisconnectGist} style={{
                   padding: "8px 12px", background: "transparent", border: "1px solid #333",
                   borderRadius: 6, color: "#666", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
                 }}>Disconnect</button>
               )}
             </div>
             {gistId && (
-              <div style={{ fontSize: 10, color: "#444", fontFamily: "monospace" }}>
-                Gist: <a href={`https://gist.github.com/${gistId}`} target="_blank" rel="noreferrer"
-                  style={{ color: "#3b82f6" }}>{gistId}</a>
+              <div style={{ padding: "8px 10px", background: "#0d0d0d", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 10, color: "#555", fontFamily: "monospace", flex: 1 }}>
+                  Gist ID: <span style={{ color: "#3b82f6" }}>{gistId}</span>
+                  {" "}·{" "}
+                  <a href={`https://gist.github.com/${gistId}`} target="_blank" rel="noreferrer" style={{ color: "#555" }}>view ↗</a>
+                </div>
+                <button onClick={() => navigator.clipboard?.writeText(gistId)} style={{
+                  padding: "3px 8px", background: "#1a1a1a", border: "1px solid #333",
+                  borderRadius: 4, color: "#888", fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                }}>Copy ID</button>
               </div>
             )}
             {syncStatus === "error" && (
