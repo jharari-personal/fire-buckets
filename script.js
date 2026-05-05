@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.3";
+const APP_VERSION = "20260505.4";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -93,6 +93,45 @@ async function saveState(state) {
     localStorage.setItem("harari-dashboard-state", JSON.stringify(state));
   } catch (e) {
     console.error("Storage save failed:", e);
+  }
+}
+
+// ─── GITHUB GIST SYNC ───
+const GIST_FILENAME = "harari-state.json";
+
+async function loadFromGist(token, gistId) {
+  const resp = await fetch(`https://api.github.com/gists/${gistId}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" },
+  });
+  if (!resp.ok) throw new Error(`GitHub ${resp.status}: ${resp.statusText}`);
+  const data = await resp.json();
+  const content = data.files[GIST_FILENAME]?.content;
+  if (!content) throw new Error("State file not found in Gist");
+  return JSON.parse(content);
+}
+
+async function saveToGist(token, gistId, state) {
+  const payload = {
+    description: "Harari FIRE Dashboard State",
+    files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } },
+  };
+  if (gistId) {
+    const resp = await fetch(`https://api.github.com/gists/${gistId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error(`GitHub ${resp.status}: ${resp.statusText}`);
+    return gistId;
+  } else {
+    const resp = await fetch("https://api.github.com/gists", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, public: false }),
+    });
+    if (!resp.ok) throw new Error(`GitHub ${resp.status}: ${resp.statusText}`);
+    const data = await resp.json();
+    return data.id;
   }
 }
 
@@ -375,6 +414,14 @@ function Dashboard() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("runway");
 
+  // ─── GIST SYNC STATE ───
+  const [ghToken, setGhToken]           = useState("");
+  const [gistId, setGistId]             = useState("");
+  const [syncStatus, setSyncStatus]     = useState("local"); // local | loading | ok | error
+  const [syncError, setSyncError]       = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [tokenInput, setTokenInput]     = useState("");
+
   // ─── SITUATION FLAGS ───
   const [flags, setFlags] = useState({
     employed:        true,
@@ -427,7 +474,28 @@ function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const s = await loadState();
+      // Load Gist credentials from their own localStorage keys
+      const savedToken = localStorage.getItem("harari-gh-token") || "";
+      const savedGistId = localStorage.getItem("harari-gist-id") || "";
+      if (savedToken) { setGhToken(savedToken); setTokenInput(savedToken); }
+      if (savedGistId) setGistId(savedGistId);
+
+      // Try Gist first, fall back to localStorage
+      let s = null;
+      if (savedToken && savedGistId) {
+        setSyncStatus("loading");
+        try {
+          s = await loadFromGist(savedToken, savedGistId);
+          setSyncStatus("ok");
+        } catch (e) {
+          setSyncError(e.message);
+          setSyncStatus("error");
+          s = await loadState();
+        }
+      } else {
+        s = await loadState();
+      }
+
       if (s) {
         if (s.bucketVWCE !== undefined) {
           setBucketVWCE(s.bucketVWCE);
@@ -472,17 +540,33 @@ function Dashboard() {
 
   useEffect(() => {
     if (!loaded) return;
-    const t = setTimeout(() => {
-      saveState({
-        bucketVWCE, bucketXEON, bucketFixed, bucketCash,
-        phase, mainIncome, annualExpense, wifeIncome,
-        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
-        apartmentRent, resortCost, bgTax10, realReturn, flags,
-        gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
-      });
+    const state = {
+      bucketVWCE, bucketXEON, bucketFixed, bucketCash,
+      phase, mainIncome, annualExpense, wifeIncome,
+      schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
+      apartmentRent, resortCost, bgTax10, realReturn, flags,
+      gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
+    };
+    const t = setTimeout(async () => {
+      saveState(state); // localStorage backup always
+      if (ghToken) {
+        setSyncStatus("syncing");
+        try {
+          const newId = await saveToGist(ghToken, gistId, state);
+          if (newId !== gistId) {
+            setGistId(newId);
+            localStorage.setItem("harari-gist-id", newId);
+          }
+          setSyncStatus("ok");
+          setSyncError("");
+        } catch (e) {
+          setSyncError(e.message);
+          setSyncStatus("error");
+        }
+      }
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, bucketVWCE, bucketXEON, bucketFixed, bucketCash, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory]);
+  }, [loaded, bucketVWCE, bucketXEON, bucketFixed, bucketCash, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory, ghToken, gistId]);
 
   const portfolio = bucketVWCE + bucketXEON + bucketFixed + bucketCash;
 
@@ -656,6 +740,39 @@ function Dashboard() {
   const projTabFlash = useFlash(projHash, "tab");
   const gkTabFlash = useFlash(gkHash, "tab");
 
+  // ─── GIST CONNECT HANDLER ───
+  const handleConnectGist = async () => {
+    const token = tokenInput.trim();
+    if (!token) {
+      // Disconnect
+      localStorage.removeItem("harari-gh-token");
+      localStorage.removeItem("harari-gist-id");
+      setGhToken(""); setGistId(""); setSyncStatus("local"); setSyncError("");
+      return;
+    }
+    localStorage.setItem("harari-gh-token", token);
+    setGhToken(token);
+    setSyncStatus("syncing");
+    try {
+      const state = {
+        bucketVWCE, bucketXEON, bucketFixed, bucketCash,
+        phase, mainIncome, annualExpense, wifeIncome,
+        schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
+        apartmentRent, resortCost, bgTax10, realReturn, flags,
+        gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
+      };
+      const newId = await saveToGist(token, gistId, state);
+      setGistId(newId);
+      localStorage.setItem("harari-gist-id", newId);
+      setSyncStatus("ok"); setSyncError("");
+    } catch (e) {
+      setSyncError(e.message); setSyncStatus("error");
+    }
+  };
+
+  const syncDot = { ok: "#22c55e", syncing: "#f59e0b", error: "#dc2626", loading: "#f59e0b", local: "#444" }[syncStatus];
+  const syncLabel = { ok: "Synced", syncing: "Saving…", error: "Sync error", loading: "Loading…", local: "Local only" }[syncStatus];
+
   if (!loaded) return (
     <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <span style={{ color: "#555", fontSize: 13 }}>Loading saved state...</span>
@@ -678,7 +795,7 @@ function Dashboard() {
             Financial Command Center
           </h1>
           <p style={{ fontSize: 12, color: "#555", margin: "4px 0 0" }}>
-            State persists between sessions. Update portfolio value monthly after checking IBKR.
+            State auto-saves locally. Click the sync indicator to connect GitHub Gist for cross-device sync.
           </p>
         </div>
 
@@ -777,8 +894,9 @@ function Dashboard() {
 
         {/* TAB SWITCHER */}
         <div style={{
-          display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #222",
-          overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch"
+          display: "flex", gap: 0, marginBottom: 0, borderBottom: "1px solid #222",
+          overflowX: "auto", whiteSpace: "nowrap", WebkitOverflowScrolling: "touch",
+          alignItems: "flex-end",
         }}>
           {[
             { key: "runway",      label: "Runway & Levers", flashStyle: runTabFlash },
@@ -801,7 +919,67 @@ function Dashboard() {
               }}>{t.label}</button>
             );
           })}
+          {/* Sync indicator — pushes to right */}
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setShowSettings(s => !s)} style={{
+            display: "flex", alignItems: "center", gap: 5, padding: "8px 12px",
+            border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit",
+            color: "#444", fontSize: 11, borderBottom: showSettings ? "2px solid #555" : "2px solid transparent",
+            flexShrink: 0,
+          }}>
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: syncDot, flexShrink: 0 }} />
+            {!isMobile && <span>{syncLabel}</span>}
+          </button>
         </div>
+
+        {/* SETTINGS PANEL */}
+        {showSettings && (
+          <div style={{ padding: "16px", background: "#111", border: "1px solid #222", borderTop: "none", borderRadius: "0 0 8px 8px", marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 12 }}>Cloud Sync — GitHub Gist</div>
+            <div style={{ fontSize: 11, color: "#555", marginBottom: 12, lineHeight: 1.6 }}>
+              State syncs to a private GitHub Gist so it persists across devices and browsers.
+              Create a <strong style={{ color: "#888" }}>fine-grained personal access token</strong> at{" "}
+              <span style={{ color: "#3b82f6", fontFamily: "monospace" }}>github.com/settings/tokens</span> with{" "}
+              <strong style={{ color: "#888" }}>Gists: read &amp; write</strong> permission.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <input
+                type="password"
+                value={tokenInput}
+                onChange={e => setTokenInput(e.target.value)}
+                placeholder="github_pat_…"
+                style={{
+                  flex: 1, padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                  borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace",
+                  outline: "none",
+                }}
+              />
+              <button onClick={handleConnectGist} style={{
+                padding: "8px 16px", background: tokenInput.trim() ? "#2563eb" : "#222",
+                border: "none", borderRadius: 6, color: "#fff", fontSize: 12,
+                fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+              }}>
+                {ghToken ? "Update" : "Connect"}
+              </button>
+              {ghToken && (
+                <button onClick={() => { setTokenInput(""); handleConnectGist(); }} style={{
+                  padding: "8px 12px", background: "transparent", border: "1px solid #333",
+                  borderRadius: 6, color: "#666", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+                }}>Disconnect</button>
+              )}
+            </div>
+            {gistId && (
+              <div style={{ fontSize: 10, color: "#444", fontFamily: "monospace" }}>
+                Gist: <a href={`https://gist.github.com/${gistId}`} target="_blank" rel="noreferrer"
+                  style={{ color: "#3b82f6" }}>{gistId}</a>
+              </div>
+            )}
+            {syncStatus === "error" && (
+              <div style={{ marginTop: 8, fontSize: 11, color: "#f87171" }}>Error: {syncError}</div>
+            )}
+          </div>
+        )}
+        {showSettings ? null : <div style={{ marginBottom: 20 }} />}
 
         {/* TAB: RUNWAY & LEVERS */}
         {tab === "runway" && (
