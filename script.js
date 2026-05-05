@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.6";
+const APP_VERSION = "20260505.7";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -592,6 +592,12 @@ function Dashboard() {
   const plovTotal = calcDrawWithTax(plovGross);
   const plovSWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
 
+  // ─── DERIVED FIRE TARGETS (based on actual expenses, not hardcoded) ───
+  const fireTargetLean        = Math.round(plovTotal / 0.045 / 1000) * 1000; // 4.5% IWR
+  const fireTargetAggressive  = Math.round(plovTotal / 0.040 / 1000) * 1000; // 4.0% IWR (GK IWR)
+  const fireTargetRecommended = Math.round(plovTotal / 0.035 / 1000) * 1000; // 3.5% IWR (GK safe entry)
+  const fireTargetBulletproof = Math.round(plovTotal / 0.030 / 1000) * 1000; // 3.0% IWR
+
   const netApartmentRent = effectiveApartmentRent * 0.91;
 
   const buildCapital = portfolio - buildCost;
@@ -628,14 +634,14 @@ function Dashboard() {
   }, [portfolio, realReturn, effectiveMonthlyContrib]);
 
   const projections = useMemo(() => ({
-    p500: monthsTo(500000),
-    aggressive: monthsTo(FIRE_TARGETS.aggressive),
-    recommended: monthsTo(FIRE_TARGETS.recommended),
-    bulletproof: monthsTo(FIRE_TARGETS.bulletproof),
-  }), [monthsTo]);
+    lean: monthsTo(fireTargetLean),
+    aggressive: monthsTo(fireTargetAggressive),
+    recommended: monthsTo(fireTargetRecommended),
+    bulletproof: monthsTo(fireTargetBulletproof),
+  }), [monthsTo, fireTargetLean, fireTargetAggressive, fireTargetRecommended, fireTargetBulletproof]);
 
-  const fireGap = Math.max(0, FIRE_TARGETS.recommended - portfolio);
-  const fireProgress = Math.min(100, (portfolio / FIRE_TARGETS.recommended) * 100);
+  const fireGap = Math.max(0, fireTargetRecommended - portfolio);
+  const fireProgress = Math.min(100, (portfolio / fireTargetRecommended) * 100);
 
   // ─── GK DERIVED STATE ───
   const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
@@ -873,7 +879,7 @@ function Dashboard() {
         <div style={{ marginBottom: 24, padding: "0 2px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 4, fontFamily: "monospace" }}>
             <span>€0</span>
-            <span>FIRE €625k</span>
+            <span>FIRE €{(fireTargetRecommended / 1000).toFixed(0)}k (3.5% IWR)</span>
           </div>
           <div style={{ height: 8, background: "#1a1a1a", borderRadius: 4, position: "relative", overflow: "hidden" }}>
             <div style={{
@@ -881,10 +887,10 @@ function Dashboard() {
               background: fireProgress >= 100 ? "#059669" : `linear-gradient(90deg, #2563eb, ${fireProgress > 85 ? "#059669" : "#2563eb"})`,
               transition: "width 0.5s ease",
             }} />
-            {[550, 625, 700].map(t => {
-              const pos = (t / 625) * 100;
-              return pos < 98 ? (
-                <div key={t} style={{ position: "absolute", left: `${Math.min(pos, 95)}%`, top: 0, height: "100%", width: 1, background: "#333" }} />
+            {[fireTargetLean, fireTargetAggressive].map(t => {
+              const pos = (t / fireTargetRecommended) * 100;
+              return pos > 2 && pos < 98 ? (
+                <div key={t} style={{ position: "absolute", left: `${pos}%`, top: 0, height: "100%", width: 1, background: "#333" }} />
               ) : null;
             })}
           </div>
@@ -1413,24 +1419,24 @@ function Dashboard() {
                 {effectiveMonthlyContrib > 0 ? `Assumes €${Math.round(effectiveMonthlyContrib).toLocaleString()}/mo net contributions (income minus expenses).` : "No net surplus — portfolio growth only."}
               </div>
 
-              <ProjectionRow label="Lean FIRE" months={projections.p500} target={500000} color="#2563eb" />
-              <ProjectionRow label="Aggressive FIRE (4.0% GK IWR)" months={projections.aggressive} target={FIRE_TARGETS.aggressive} color="#d97706" />
-              <ProjectionRow label="Recommended FIRE (3.5% → GK safe zone)" months={projections.recommended} target={FIRE_TARGETS.recommended} color="#059669" />
-              <ProjectionRow label="Bulletproof FIRE" months={projections.bulletproof} target={FIRE_TARGETS.bulletproof} color="#8b5cf6" />
+              <ProjectionRow label={`Lean FIRE (4.5% IWR · €${(fireTargetLean/1000).toFixed(0)}k)`} months={projections.lean} target={fireTargetLean} color="#2563eb" />
+              <ProjectionRow label={`Aggressive FIRE (4.0% GK IWR · €${(fireTargetAggressive/1000).toFixed(0)}k)`} months={projections.aggressive} target={fireTargetAggressive} color="#d97706" />
+              <ProjectionRow label={`Recommended FIRE (3.5% IWR · €${(fireTargetRecommended/1000).toFixed(0)}k)`} months={projections.recommended} target={fireTargetRecommended} color="#059669" />
+              <ProjectionRow label={`Bulletproof FIRE (3.0% IWR · €${(fireTargetBulletproof/1000).toFixed(0)}k)`} months={projections.bulletproof} target={fireTargetBulletproof} color="#8b5cf6" />
 
               <div style={{ marginTop: 16, padding: "12px 14px", background: "#1a1a1a", borderRadius: 6, borderLeft: "3px solid #dc2626" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5", marginBottom: 6 }}>Layoff Scenario (€0 contributions)</div>
                 <div style={{ fontSize: 11, color: "#888", lineHeight: 1.6 }}>
                   {(() => {
                     const r = realReturn / 100 / 12;
-                    let n625 = null;
+                    let nTarget = null;
                     for (let n = 1; n <= 360; n++) {
-                      if (portfolio * Math.pow(1 + r, n) >= FIRE_TARGETS.recommended) { n625 = n; break; }
+                      if (portfolio * Math.pow(1 + r, n) >= fireTargetRecommended) { nTarget = n; break; }
                     }
-                    const d = new Date(); d.setMonth(d.getMonth() + (n625 || 0));
-                    return n625
-                      ? `At ${realReturn}% real return with zero contributions, portfolio reaches €625k in ~${n625} months (${d.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}). Runway covers ${runwayMonths} months — ${runwayMonths > n625 ? "runway outlasts the gap." : "gap exceeds runway. Wife's income or part-time work needed."}`
-                      : `At current portfolio and return assumptions, €625k is not reached within 30 years without contributions.`;
+                    const d = new Date(); d.setMonth(d.getMonth() + (nTarget || 0));
+                    return nTarget
+                      ? `At ${realReturn}% real return with zero contributions, portfolio reaches €${(fireTargetRecommended/1000).toFixed(0)}k in ~${nTarget} months (${d.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}). Runway covers ${runwayMonths} months — ${runwayMonths > nTarget ? "runway outlasts the gap." : "gap exceeds runway. Part-time income or side work needed."}`
+                      : `At current portfolio and return assumptions, the €${(fireTargetRecommended/1000).toFixed(0)}k target is not reached within 30 years without contributions.`;
                   })()}
                 </div>
               </div>
@@ -1440,25 +1446,27 @@ function Dashboard() {
             <Card style={{ borderLeft: "3px solid #8b5cf6" }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>GK Model: Post-FIRE Sustainability</div>
               <div style={{ fontSize: 10, color: "#555", marginBottom: 14 }}>
-                Simulates Guyton-Klinger from the €625k FIRE target with current expense level. Assumptions: 7.5% nominal return, 2.5% inflation.
+                Simulates Guyton-Klinger from your <strong style={{ color: "#777" }}>current portfolio</strong> and expense level.
+                Nominal return &amp; inflation from the Withdrawals tab.
               </div>
               {(() => {
-                const initWR = FIRE_TARGETS.recommended > 0 ? (plovTotal / FIRE_TARGETS.recommended) * 100 : 0;
+                const initWR = portfolio > 0 ? (plovTotal / portfolio) * 100 : 0;
                 const initTheme = getSWRTheme(initWR);
                 const rows50 = runGKSimulation({
-                  startPortfolio: FIRE_TARGETS.recommended,
+                  startPortfolio: portfolio,
                   startWithdrawal: plovTotal,
-                  nominalReturn: 0.075,
-                  inflation: 0.025,
+                  nominalReturn: gkNominalReturn / 100,
+                  inflation: gkInflation / 100,
                   years: 50,
                 });
                 const keyYears = [10, 20, 30, 40, 50];
                 return (
                   <div>
                     <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>
-                      From <strong style={{ color: "#aaa" }}>€{FIRE_TARGETS.recommended / 1000}k</strong> ·
+                      From <strong style={{ color: "#aaa" }}>€{(portfolio / 1000).toFixed(0)}k</strong> ·
                       €{Math.round(plovTotal).toLocaleString()}/yr draw ·
-                      Initial IWR: <span style={{ color: initTheme.color, fontWeight: 700 }}>{initWR.toFixed(2)}% ({initTheme.label})</span>
+                      Initial IWR: <span style={{ color: initTheme.color, fontWeight: 700 }}>{initWR.toFixed(2)}% ({initTheme.label})</span> ·
+                      {gkNominalReturn}% nominal / {gkInflation}% inflation
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: 8, marginBottom: 12 }}>
                       {keyYears.map(y => {
@@ -1732,8 +1740,8 @@ function Dashboard() {
                   <br /><br />
                   <strong style={{ color: "#888" }}>IWR (Initial Withdrawal Rate)</strong> is the percentage of your portfolio you withdraw in Year 1 of retirement.
                   GK uses 4.0% as the starting rate — higher than the conservative 3.5% SWR, justified by the guardrail
-                  rules that protect against over-withdrawal. At €{(FIRE_TARGETS.recommended / 1000).toFixed(0)}k portfolio,
-                  a 4.0% IWR = €{Math.round(FIRE_TARGETS.recommended * 0.04).toLocaleString()}/yr.
+                  rules that protect against over-withdrawal. At €{(fireTargetAggressive / 1000).toFixed(0)}k portfolio (your 4.0% IWR target),
+                  that is €{Math.round(plovTotal).toLocaleString()}/yr.
                 </div>
 
                 <Slider label="GK Base Withdrawal" value={Math.max(10000, Math.round(effectiveBaseWithdrawal))}
@@ -2035,7 +2043,7 @@ function Dashboard() {
 
         <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #111", fontSize: 10, color: "#333", lineHeight: 1.5, textAlign: "center" }}>
           Joseph Harari · U15566654 · v{APP_VERSION} · Bulgarian Tax Resident ·
-          FIRE Target €{FIRE_TARGETS.recommended / 1000}k
+          FIRE Target €{(fireTargetRecommended / 1000).toFixed(0)}k
           (GK IWR 4.0% · guardrails 3.2% / 4.8% on {plovTotal.toLocaleString("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}/yr) ·
           Last framework revision: May 2026
           <br />State auto-saves. Update portfolio value monthly.
