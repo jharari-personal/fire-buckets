@@ -257,7 +257,7 @@ function PlanView({ state, setState }) {
           />
           <PrecisionSlider
             label="Capital-gains tax"
-            value={state.bgCgtRatePct || 10}
+            value={state.bgCgtRatePct || 0}
             onChange={(v) => updateState("bgCgtRatePct", v)}
             min={0} max={30} step={1} suffix="%"
             hint="Bulgarian default 0%. Shown as estimated CGT cost when forced to draw from VWCE."
