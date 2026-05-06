@@ -1,7 +1,7 @@
 // IMPORTANT: bump SW_VERSION whenever you bump APP_VERSION in script.js.
 // The two strings must stay in sync — there is no shared constant because
 // sw.js runs in a separate JS context from script.js (no importScripts here).
-const SW_VERSION = "20260506.0";
+const SW_VERSION = "20260506.2";
 const CACHE_NAME = `fcc-cache-${SW_VERSION}`;
 
 // Use absolute paths tied specifically to your GH Pages repository

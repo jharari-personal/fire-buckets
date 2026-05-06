@@ -260,7 +260,7 @@ function PlanView({ state, setState }) {
             value={state.bgCgtRatePct || 10}
             onChange={(v) => updateState("bgCgtRatePct", v)}
             min={0} max={30} step={1} suffix="%"
-            hint="Bulgarian default 10%. Used in drawdown order."
+            hint="Bulgarian default 10%. Shown as estimated CGT cost when forced to draw from VWCE."
           />
         </div>
       </Card>
