@@ -122,12 +122,18 @@ function TodayView({ state, setState }) {
   const fortressMonths = cf.totalExpenses > 0 ? (state.bucketXEON||0) / cf.totalExpenses : 0;
   const totalRunwayMonths = cf.totalExpenses > 0 ? ((state.bucketXEON||0) + (state.bucketCash||0)) / cf.totalExpenses : 0;
 
-  const realReturn = (state.gkNominalReturn || 7.0) - (state.gkInflation || 2.0);
+  // Fisher equation for real return: (1+nom)/(1+inf) − 1
+  const realReturn = ((1 + (state.gkNominalReturn || 7.0) / 100) / (1 + (state.gkInflation || 2.0) / 100) - 1) * 100;
   const fireTarget = cf.annualExpenses / GK_CONFIG.IWR;
   const progress = fireTarget > 0 ? Math.min(1, portfolio / fireTarget) : 0;
   const fireGap = Math.max(0, fireTarget - portfolio);
+  // Correct FV-with-contributions formula: n = ln((F·r + c)/(P·r + c)) / ln(1+r)
+  // The prior formula ln(1 + (F−P)·r/c)/ln(1+r) only holds when P=0.
+  const _rMonthly = realReturn / 100 / 12;
   const monthsToFire = cf.surplusMonthly > 0 && fireGap > 0
-    ? Math.log(1 + fireGap * (realReturn / 100 / 12) / cf.surplusMonthly) / Math.log(1 + realReturn / 100 / 12)
+    ? (_rMonthly === 0
+        ? Math.ceil(fireGap / cf.surplusMonthly)
+        : Math.log((fireTarget * _rMonthly + cf.surplusMonthly) / (portfolio * _rMonthly + cf.surplusMonthly)) / Math.log(1 + _rMonthly))
     : (fireGap === 0 ? 0 : Infinity);
 
   const lastWithdrawal = (state.gkHistory && state.gkHistory.length > 0)
@@ -150,26 +156,26 @@ function TodayView({ state, setState }) {
     if (portfolio >= target) return 0;
     if (cf.surplusMonthly <= 0 && realReturnMonthly <= 0) return Infinity;
     if (cf.surplusMonthly <= 0) {
-      // Growth-only: target = portfolio * (1+r)^n
       const n = Math.log(target / portfolio) / Math.log(1 + realReturnMonthly);
-      return n > 360 ? Infinity : Math.ceil(n);
+      return n > 600 ? Infinity : Math.ceil(n);
     }
-    // FV with contributions: target = portfolio*(1+r)^n + c*((1+r)^n - 1)/r
     const r = realReturnMonthly;
     const c = cf.surplusMonthly;
-    const n = Math.log(1 + (target - portfolio) * r / c) / Math.log(1 + r);
+    // Correct closed-form: n = ln((F·r + c)/(P·r + c)) / ln(1+r)
+    if (r === 0) return Math.ceil((target - portfolio) / c);
+    const n = Math.log((target * r + c) / (portfolio * r + c)) / Math.log(1 + r);
     return Number.isFinite(n) && n > 0 && n <= 600 ? Math.ceil(n) : Infinity;
   };
   const monthsLayoffOnly = (() => {
     if (portfolio >= fireTarget) return 0;
     if (realReturnMonthly <= 0) return Infinity;
     const n = Math.log(fireTarget / portfolio) / Math.log(1 + realReturnMonthly);
-    return n > 360 ? Infinity : Math.ceil(n);
+    return n > 600 ? Infinity : Math.ceil(n);
   })();
 
   const milestones = [
-    { id: "lean",         label: "Lean FIRE",        wr: 0.045, color: "var(--accent)",     sub: "Cover essentials only" },
-    { id: "aggressive",   label: "Aggressive FIRE",  wr: 0.040, color: "var(--b-fixed)",    sub: "GK baseline (4% IWR)" },
+    { id: "lean",         label: "Lean FIRE",        wr: GK_CONFIG.IWR, color: "var(--accent)",  sub: "Essentials only, 4% IWR" },
+    { id: "aggressive",   label: "Aggressive FIRE",  wr: 0.045,         color: "var(--b-fixed)", sub: "Full spend, 4.5% IWR" },
     { id: "recommended",  label: "Recommended",      wr: 0.035, color: "var(--good)",       sub: "Comfortable margin" },
     { id: "bulletproof",  label: "Bulletproof",      wr: 0.030, color: "var(--b-fortress)", sub: "Sequence-risk proof" },
   ].map(m => {
@@ -386,17 +392,29 @@ function TodayView({ state, setState }) {
                   <span style={{ fontSize: 12, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Action</span>
                 </Row>
                 {rec.drawNeeded > 0 ? (
-                  <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
-                    Withdraw <strong style={{ fontFamily: "var(--font-mono)", color: "var(--warn)" }}>{fmtEur(rec.drawNeeded)}</strong> from <strong>Safety</strong> (XEON).
-                    Trim fun by <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funCut)}</strong> first.
-                  </div>
+                  <>
+                    <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
+                      Withdraw <strong style={{ fontFamily: "var(--font-mono)", color: rec.drawSource === "growth" ? "var(--bad)" : "var(--warn)" }}>{fmtEur(rec.drawNeeded)}</strong> from <strong>{rec.drawSourceLabel}</strong> ({rec.drawSourceInst}).
+                      {rec.funCut > 0 && <> Trim fun by <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funCut)}</strong> first.</>}
+                    </div>
+                    {rec.xeonWarning && (
+                      <div style={{ fontSize: 12, color: "var(--warn)", lineHeight: 1.55 }}>
+                        ⚠ Safety (XEON) is running low — plan to refill from Stability (Bonds) soon.
+                      </div>
+                    )}
+                    {rec.cgtCost > 0 && (
+                      <div style={{ fontSize: 12, color: "var(--bad)", lineHeight: 1.55 }}>
+                        Estimated CGT on VWCE draw: ~{fmtEur(rec.cgtCost)} (50% gain assumption, {state.bgCgtRatePct || 10}% rate).
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
                     Trim fun budget by <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funCut)}</strong> — you can cover this month without selling.
                   </div>
                 )}
                 <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>
-                  WR zone: <strong>{rec.zone.label}</strong>. Do not touch Growth (VWCE).
+                  WR zone: <strong>{rec.zone.label}</strong>.{rec.drawSource !== "growth" && " Do not touch Growth (VWCE)."}
                 </div>
               </>
             )}
@@ -493,7 +511,7 @@ function TodayView({ state, setState }) {
         <ul style={{ paddingLeft: 18, margin: "6px 0" }}>
           <li>If the rate has crept above <strong>4.8%</strong> (markets fell), you cut next year's withdrawal by 10%.</li>
           <li>If it's dropped below <strong>3.2%</strong> (markets rose), you can raise withdrawals by 10%.</li>
-          <li>Otherwise you just track inflation, capped at 6%.</li>
+          <li>Otherwise you raise withdrawals by the full CPI that year (canonical GK — no cap).</li>
         </ul>
       </Disclosure>
     </Stack>

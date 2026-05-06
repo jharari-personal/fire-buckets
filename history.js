@@ -2,8 +2,8 @@
 
 function HistoryView({ state, setState }) {
   const { isMobile } = useViewport();
-  const portfolio = state.bucketVWCE + state.bucketXEON + state.bucketFixedIncome + state.bucketCash;
-  const annualExpenses = state.monthlyExpensesEUR * 12;
+  const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
+  const annualExpenses = ((state.monthlyEssentialsEUR || 0) + (state.monthlyFunEUR || 0)) * 12;
   const history = state.gkHistory || [];
   const lastWithdrawal = history.length > 0 ? history[history.length - 1].finalWithdrawal : annualExpenses;
 

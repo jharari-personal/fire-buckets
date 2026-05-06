@@ -101,24 +101,37 @@ function GKLineChart({ rows, height = 220 }) {
 
 function StressView({ state, setState }) {
   const { isMobile } = useViewport();
-  const portfolio = state.bucketVWCE + state.bucketXEON + state.bucketFixedIncome + state.bucketCash;
-  const annualExpenses = state.monthlyExpensesEUR * 12;
-  const equityShare = portfolio > 0 ? state.bucketVWCE / portfolio : 0.7;
+  // Use deriveCashflow so annualExpenses is consistent with all other tabs
+  const cf = deriveCashflow(state);
+  const annualExpenses = cf.annualExpenses;
+  const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
+  const equityShare = portfolio > 0 ? (state.bucketVWCE||0) / portfolio : 0.7;
+
+  // gkNominalReturn is the *portfolio-blended* expected return (set in Plan).
+  // For MC we need the *equity-only* return, derived from the blend:
+  //   portfolioReturn = equityShare·equityMu + (1−equityShare)·bondMu
+  //   equityMu = (portfolioReturn − (1−equityShare)·bondMu) / equityShare
+  const bondMuFixed = 0.03;
+  const portfolioReturn = (state.gkNominalReturn || 7) / 100;
+  const equityMuForMC = equityShare > 0.01
+    ? (portfolioReturn - (1 - equityShare) * bondMuFixed) / equityShare
+    : portfolioReturn;
 
   const [mcEquitySigma, setMcEquitySigma] = useState(15.0);
   const [mcInflationSigma, setMcInflationSigma] = useState(1.5);
+  const [mcRho, setMcRho] = useState(0.0);
   const [mcPaths, setMcPaths] = useState(1000);
   const [mcResult, setMcResult] = useState(null);
   const [mcRunning, setMcRunning] = useState(false);
 
-  // GK linear projection
+  // Linear projection uses portfolio-blended return (gkNominalReturn)
   const gkRows = useMemo(() => runGKSimulation({
     startPortfolio: portfolio,
     startWithdrawal: annualExpenses,
-    nominalReturn: (state.gkNominalReturn || 7) / 100,
+    nominalReturn: portfolioReturn,
     inflation: (state.gkInflation || 2) / 100,
     years: 40,
-  }), [portfolio, annualExpenses, state.gkNominalReturn, state.gkInflation]);
+  }), [portfolio, annualExpenses, portfolioReturn, state.gkInflation]);
 
   const handleRunMC = () => {
     setMcRunning(true);
@@ -127,11 +140,12 @@ function StressView({ state, setState }) {
         startPortfolio: portfolio,
         startWithdrawal: annualExpenses,
         equityShare,
-        equityMu: (state.gkNominalReturn || 7) / 100,
+        equityMu: equityMuForMC,
         equitySigma: mcEquitySigma / 100,
-        bondMu: 0.03, bondSigma: 0.04,
+        bondMu: bondMuFixed, bondSigma: 0.04,
         inflationTarget: (state.gkInflation || 2) / 100,
         inflationSigma: mcInflationSigma / 100,
+        rhoEquityBond: mcRho,
         years: 40, paths: mcPaths,
       });
       setMcResult(result);
@@ -176,15 +190,16 @@ function StressView({ state, setState }) {
           }
         />
 
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
           <PrecisionSlider label="Equity volatility (σ)" value={mcEquitySigma} onChange={setMcEquitySigma} min={8} max={30} step={0.5} suffix="%" />
           <PrecisionSlider label="Inflation volatility (σ)" value={mcInflationSigma} onChange={setMcInflationSigma} min={0.5} max={5} step={0.1} suffix="%" />
+          <PrecisionSlider label="Stock-bond correlation (ρ)" value={mcRho} onChange={setMcRho} min={-0.6} max={0.8} step={0.05} format={v => v.toFixed(2)} hint="0 = independent; +0.4 = 2022-style regime" />
           <PrecisionSlider label="Number of paths" value={mcPaths} onChange={setMcPaths} min={200} max={3000} step={200} format={v => v.toLocaleString()} />
         </div>
 
         {mcResult ? (
           <Stack gap={16}>
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
               <Card padding={16} tone="inset" style={{ borderColor: mcResult.successRate >= 0.95 ? "rgba(108,212,154,0.4)" : mcResult.successRate >= 0.85 ? "rgba(245,184,107,0.4)" : "rgba(239,115,115,0.4)" }}>
                 <Stat
                   label="Success rate"
@@ -210,6 +225,36 @@ function StressView({ state, setState }) {
                   footnote={`Nominal at year ${mcResult.bands.length}`}
                 />
               </Card>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12 }}>
+              <Card padding={16} tone="inset">
+                <Stat
+                  label="CVaR (worst 10%)"
+                  value={fmtEurK(mcResult.cvar10)}
+                  tone={mcResult.cvar10 < 0 ? "bad" : "default"}
+                  size="lg"
+                  footnote="Mean balance in the worst-decile paths"
+                />
+              </Card>
+              {mcResult.medianDepletionYear != null ? (
+                <Card padding={16} tone="inset" style={{ borderColor: "rgba(239,115,115,0.4)" }}>
+                  <Stat
+                    label="Median depletion"
+                    value={`Year ${mcResult.medianDepletionYear}`}
+                    tone="bad" size="lg"
+                    footnote={`Median year depleted in ${((1 - mcResult.successRate) * 100).toFixed(0)}% of failed paths`}
+                  />
+                </Card>
+              ) : (
+                <Card padding={16} tone="inset" style={{ borderColor: "rgba(108,212,154,0.4)" }}>
+                  <Stat
+                    label="Depletion"
+                    value="None"
+                    tone="good" size="lg"
+                    footnote="No paths depleted in this run"
+                  />
+                </Card>
+              )}
             </div>
 
             <FanChart bands={mcResult.bands} height={isMobile ? 220 : 280} />
