@@ -2,32 +2,144 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Financial Command Center</title>
-    
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Compass — FIRE Planner</title>
+
+    <meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    
+
     <link rel="apple-touch-icon" href="/fire-buckets/icon-192.png" />
     <link rel="manifest" href="/fire-buckets/manifest.json" />
 
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
+
+    <style>
+      :root {
+        /* Surfaces */
+        --bg:        #0b0c0f;
+        --surface-1: #14161b;
+        --surface-2: #1c1f25;
+        --surface-3: #252932;
+        --hairline:  #2a2e37;
+        --hairline-strong: #353a45;
+
+        /* Text */
+        --fg:       #f0efeb;
+        --fg-mute:  #a8a8a3;
+        --fg-soft:  #6e6e69;
+        --fg-faint: #4a4a47;
+
+        /* Single accent (Compass blue) — used sparingly */
+        --accent:      #7aa2ff;
+        --accent-soft: #2a3658;
+        --accent-deep: #6b94f4;
+
+        /* Semantic */
+        --good:    #6cd49a;
+        --good-soft: #1c3328;
+        --warn:    #f5b86b;
+        --warn-soft: #3a2a14;
+        --bad:     #ef7373;
+        --bad-soft: #3a1c1c;
+
+        /* Bucket colors (kept) — desaturated to live in dark calm palette */
+        --b-growth:   #7aa2ff;  /* VWCE */
+        --b-fortress: #6cd49a;  /* XEON */
+        --b-fixed:    #f5b86b;  /* Bonds */
+        --b-cash:     #8c8c87;  /* Cash */
+
+        --radius-s: 8px;
+        --radius:   12px;
+        --radius-l: 18px;
+
+        --shadow-soft: 0 1px 0 rgba(255,255,255,0.03), 0 12px 32px -16px rgba(0,0,0,0.6);
+
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 24px;
+        --space-6: 32px;
+        --space-7: 48px;
+
+        --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-sans);
+        font-feature-settings: "ss01","cv11","tnum";
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      body {
+        min-height: 100vh;
+        background:
+          radial-gradient(1200px 600px at 80% -10%, rgba(122,162,255,0.05), transparent 60%),
+          radial-gradient(900px 500px at -10% 110%, rgba(108,212,154,0.03), transparent 60%),
+          var(--bg);
+      }
+      button { font-family: inherit; }
+      input, select, textarea { font-family: inherit; }
+      ::selection { background: rgba(122,162,255,0.25); }
+
+      /* Hide number-input spinners */
+      input[type=number]::-webkit-inner-spin-button,
+      input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number] { -moz-appearance: textfield; }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 6px; border: 2px solid var(--bg); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--hairline-strong); }
+
+      /* App-level animations */
+      @keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+      @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+      .fade-in { animation: fadeUp 240ms ease-out both; }
+
+      /* Tap target hint */
+      @media (hover: hover) {
+        .hover-lift { transition: background 160ms ease, border-color 160ms ease; }
+        .hover-lift:hover { background: var(--surface-2); }
+      }
+
+      /* Safe area for iOS */
+      .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
+      .safe-top { padding-top: max(env(safe-area-inset-top), 0px); }
+    </style>
+
+    <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
   </head>
-  <body>
+  <body class="safe-top safe-bottom">
     <div id="root"></div>
 
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          // Absolute path for the SW registration
-          navigator.serviceWorker.register('/fire-buckets/sw.js').catch(err => console.error('SW Registration failed:', err));
+          navigator.serviceWorker.register('sw.js').catch(err => console.error('SW Registration failed:', err));
         });
       }
     </script>
-    <script type="text/babel" src="/fire-buckets/script.js"></script>
+    <script type="text/babel" src="engine.js"></script>
+    <script type="text/babel" src="ui.js"></script>
+    <script type="text/babel" src="today.js"></script>
+    <script type="text/babel" src="plan.js"></script>
+    <script type="text/babel" src="stress.js"></script>
+    <script type="text/babel" src="history.js"></script>
+    <script type="text/babel" src="script.js"></script>
   </body>
 </html>
