@@ -1,4 +1,8 @@
-const CACHE_NAME = `fcc-cache-${APP_VERSION}`;
+// IMPORTANT: bump SW_VERSION whenever you bump APP_VERSION in script.js.
+// The two strings must stay in sync — there is no shared constant because
+// sw.js runs in a separate JS context from script.js (no importScripts here).
+const SW_VERSION = "20260506.0";
+const CACHE_NAME = `fcc-cache-${SW_VERSION}`;
 
 // Use absolute paths tied specifically to your GH Pages repository
 const ASSETS = [
@@ -32,18 +36,35 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Stale-while-revalidate: serve cached copy instantly, refresh in background.
+// On the next page load the user gets the updated asset. For navigations
+// without network, fall back to cached index.html.
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      // 1. Return cached asset if found
-      if (response) return response;
-      
-      // 2. Fetch from network if not in cache
-      return fetch(event.request).catch(() => {
-        // 3. Fallback if network fails and user is navigating
+    caches.match(event.request).then((cached) => {
+      const networkFetch = fetch(event.request).then((response) => {
+        if (response && response.ok && response.type === 'basic') {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
+      }).catch(() => null);
+
+      if (cached) {
+        // Kick off refresh, but return cached immediately.
+        event.waitUntil(networkFetch);
+        return cached;
+      }
+
+      // No cache hit — wait for network, with offline fallback for navigations.
+      return networkFetch.then((response) => {
+        if (response) return response;
         if (event.request.mode === 'navigate') {
           return caches.match('/fire-buckets/index.html');
         }
+        return new Response('', { status: 504, statusText: 'Offline' });
       });
     })
   );

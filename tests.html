@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>FCC — Math Tests</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0a0a0a; color: #ddd; padding: 24px; max-width: 880px; margin: 0 auto; line-height: 1.5; }
+  h1 { color: #fff; font-size: 18px; margin: 0 0 16px; }
+  .group { background: #111; border: 1px solid #222; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  .group h2 { font-size: 13px; color: #fff; margin: 0 0 10px; }
+  .pass { color: #22c55e; }
+  .fail { color: #f87171; }
+  .summary { font-size: 14px; padding: 12px 16px; border-radius: 8px; }
+  .summary.ok { background: #052e16; border: 1px solid #059669; color: #22c55e; }
+  .summary.bad { background: #3a1e1e; border: 1px solid #dc2626; color: #f87171; }
+  .row { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; }
+  .row .name { flex: 1; color: #aaa; }
+  .row .detail { color: #555; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<h1>Financial Command Center — Math Tests</h1>
+<div id="status" class="summary">Loading dashboard…</div>
+<div id="results"></div>
+<div id="root" style="display:none"></div>
+
+<!-- Same dependencies as the main app — reuse the live engine -->
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel" src="script.js"></script>
+
+<script>
+const tests = [];
+const group = (name, fn) => tests.push({ name, fn });
+const assert = (cond, label, detail = "") => ({ pass: !!cond, label, detail });
+const eq = (actual, expected, eps = 1e-6, label = "") => {
+  const ok = Math.abs(actual - expected) <= eps;
+  return assert(ok, label, ok ? `≈ ${actual}` : `got ${actual}, expected ${expected}`);
+};
+const close = (actual, expected, tolerancePct, label = "") => {
+  const tol = Math.abs(expected) * tolerancePct;
+  const ok = Math.abs(actual - expected) <= tol;
+  return assert(ok, label, ok ? `${actual.toFixed(2)} within ${(tolerancePct * 100).toFixed(0)}%` : `${actual.toFixed(2)} not within ${(tolerancePct * 100).toFixed(0)}% of ${expected}`);
+};
+
+// ─── TEST DEFINITIONS ───
+group("calcGKNextStep — guardrails", (T) => {
+  const { calcGKNextStep, GK_CONFIG } = T;
+  const out = [];
+
+  // High WR (5%) → Capital Preservation cut
+  const r1 = calcGKNextStep({ portfolio: 500000, lastWithdrawal: 25000, annualNominalReturn: 0.07, inflation: 0.025 });
+  out.push(assert(r1.trigger === "CAPITAL_PRESERVATION", "WR 5% → CAPITAL_PRESERVATION trigger", `got ${r1.trigger}`));
+  // Proposed = 25000 × 1.025 = 25625; final = 25625 × 0.9 = 23062.5
+  out.push(eq(r1.proposedWithdrawal, 25625, 0.5, "  proposed after inflation = 25,625"));
+  out.push(eq(r1.finalWithdrawal, 23062.5, 0.5, "  final after −10% cut = 23,062.50"));
+
+  // Low WR (2%) → Prosperity raise
+  const r2 = calcGKNextStep({ portfolio: 1000000, lastWithdrawal: 20000, annualNominalReturn: 0.07, inflation: 0.025 });
+  out.push(assert(r2.trigger === "PROSPERITY", "WR 2% → PROSPERITY trigger", `got ${r2.trigger}`));
+  out.push(eq(r2.finalWithdrawal, 20500 * 1.10, 0.5, "  final after +10% raise = 22,550"));
+
+  // Mid-zone (4%) → no trigger
+  const r3 = calcGKNextStep({ portfolio: 500000, lastWithdrawal: 20000, annualNominalReturn: 0.07, inflation: 0.025 });
+  out.push(assert(r3.trigger === null, "WR 4% → no trigger", `got ${r3.trigger}`));
+
+  return out;
+});
+
+group("calcGKNextStep — inflation skip (canonical 2-condition gate)", (T) => {
+  const { calcGKNextStep } = T;
+  const out = [];
+
+  // Negative return + WR above initial → skip inflation raise.
+  const r1 = calcGKNextStep({ portfolio: 500000, lastWithdrawal: 22000, annualNominalReturn: -0.10, inflation: 0.025, initialWR: 0.04 });
+  // initial WR = 4%; current pre-raise WR = 22000/500000 = 4.4% > initial → skip
+  out.push(eq(r1.proposedWithdrawal, 22000, 0.5, "neg return + WR>initial → no inflation raise"));
+
+  // Negative return BUT WR below initial → still raise (canonical)
+  const r2 = calcGKNextStep({ portfolio: 700000, lastWithdrawal: 22000, annualNominalReturn: -0.10, inflation: 0.025, initialWR: 0.04 });
+  // current WR = 22000/700000 = 3.14% < 4% initial → DO apply raise
+  out.push(eq(r2.proposedWithdrawal, 22000 * 1.025, 1, "neg return + WR<initial → raise still applies"));
+
+  // Positive return → always raise (capped)
+  const r3 = calcGKNextStep({ portfolio: 500000, lastWithdrawal: 22000, annualNominalReturn: 0.07, inflation: 0.08, initialWR: 0.04 });
+  // 8% inflation gets capped to 6%
+  out.push(eq(r3.proposedWithdrawal, 22000 * 1.06, 1, "inflation capped at 6%"));
+
+  return out;
+});
+
+group("calcGKNextStep — portfolio depletion guard", (T) => {
+  const { calcGKNextStep } = T;
+  const out = [];
+  const r = calcGKNextStep({ portfolio: 0, lastWithdrawal: 22000, annualNominalReturn: 0.05, inflation: 0.025 });
+  out.push(assert(r.trigger === "DEPLETED", "portfolio=0 → DEPLETED trigger"));
+  out.push(eq(r.finalWithdrawal, 0, 0, "  finalWithdrawal = 0"));
+  out.push(eq(r.wr, 0, 0, "  WR = 0"));
+
+  const r2 = calcGKNextStep({ portfolio: -1000, lastWithdrawal: 22000, annualNominalReturn: 0.05, inflation: 0.025 });
+  out.push(assert(r2.trigger === "DEPLETED", "portfolio<0 → DEPLETED"));
+  return out;
+});
+
+group("runGKSimulation — fixed return path", (T) => {
+  const { runGKSimulation } = T;
+  const out = [];
+
+  // Linear return + low WR → Prosperity fires in early years (the audit's "Volatility Gap")
+  const rows = runGKSimulation({
+    startPortfolio: 1000000, startWithdrawal: 25000,
+    nominalReturn: 0.07, inflation: 0.025, years: 5,
+  });
+  out.push(assert(rows.length === 5, "produces 5 rows for 5-year sim", `got ${rows.length}`));
+  out.push(assert(rows[0].trigger === "PROSPERITY", "year 1 fires PROSPERITY at 2.5% WR"));
+  out.push(assert(rows.filter(r => r.trigger === "PROSPERITY").length >= 3, "≥3 of 5 years fire PROSPERITY (the Volatility Gap demo)", `got ${rows.filter(r => r.trigger === "PROSPERITY").length}`));
+
+  // High WR → Capital Preservation fires every year
+  const rows2 = runGKSimulation({
+    startPortfolio: 400000, startWithdrawal: 22000,
+    nominalReturn: 0.07, inflation: 0.025, years: 3,
+  });
+  out.push(assert(rows2.every(r => r.trigger === "CAPITAL_PRESERVATION" || r.trigger === null), "high-WR linear → CUTs (or none if WR drops below threshold)"));
+
+  return out;
+});
+
+group("runGKSimulation — return path arrays", (T) => {
+  const { runGKSimulation } = T;
+  const out = [];
+
+  // Custom return path: -0.20 in year 1, +0.10 thereafter
+  const returnPath = [-0.20, 0.10, 0.10, 0.10, 0.10];
+  const inflationPath = [0.03, 0.03, 0.03, 0.03, 0.03];
+  const rows = runGKSimulation({
+    startPortfolio: 500000, startWithdrawal: 20000,
+    returnPath, inflationPath, years: 5,
+  });
+  out.push(assert(rows[0].annualReturn === -0.20, "year 1 return = -0.20", `got ${rows[0].annualReturn}`));
+  out.push(assert(rows[1].annualReturn === 0.10, "year 2 return = +0.10"));
+
+  // After the -20% year, portfolio shrunk → WR rises → may trigger CUT in year 2
+  // We don't assert exact value, just that the engine processes the path.
+  out.push(assert(rows.length >= 2 && Number.isFinite(rows[1].portfolioEnd), "engine processes path correctly"));
+  return out;
+});
+
+group("runMonteCarlo — basic sanity", (T) => {
+  const { runMonteCarlo } = T;
+  const out = [];
+
+  // Strong portfolio, low WR → should succeed at high rate
+  const result = runMonteCarlo({
+    startPortfolio: 1000000, startWithdrawal: 30000,
+    equityShare: 0.7,
+    equityMu: 0.07, equitySigma: 0.18,
+    bondMu: 0.03, bondSigma: 0.04,
+    inflationTarget: 0.025, inflationSigma: 0.015,
+    years: 30, paths: 300,
+  });
+  out.push(assert(result.successRate >= 0.85, "low-WR (3%) → ≥85% success", `got ${(result.successRate * 100).toFixed(1)}%`));
+  out.push(assert(result.bands.length === 30, "produces 30 yearly bands"));
+  out.push(assert(result.bands[0].p10 <= result.bands[0].p50 && result.bands[0].p50 <= result.bands[0].p90, "P10 ≤ P50 ≤ P90 (year 1)"));
+  out.push(assert(result.bands[29].p10 <= result.bands[29].p50 && result.bands[29].p50 <= result.bands[29].p90, "P10 ≤ P50 ≤ P90 (year 30)"));
+
+  // Punishing draw + low equity μ → success rate must fall well below 100%
+  const stressed = runMonteCarlo({
+    startPortfolio: 400000, startWithdrawal: 40000, // 10% starting WR
+    equityShare: 0.9,
+    equityMu: 0.04, equitySigma: 0.22,              // anaemic μ + high σ
+    bondMu: 0.02, bondSigma: 0.05,
+    inflationTarget: 0.04, inflationSigma: 0.02,
+    years: 40, paths: 400,
+  });
+  out.push(assert(stressed.successRate < 0.95, "10% WR + low μ → success rate < 95%", `got ${(stressed.successRate * 100).toFixed(1)}%`));
+  out.push(assert(stressed.preservationCutRate > 0.5, "10% WR → most paths trigger ≥1 cut", `got ${(stressed.preservationCutRate * 100).toFixed(1)}%`));
+  return out;
+});
+
+// ─── HARNESS ───
+function run() {
+  if (!window.__FIRE_TESTS__) {
+    document.getElementById("status").textContent = "Waiting for script.js to expose __FIRE_TESTS__…";
+    setTimeout(run, 100);
+    return;
+  }
+  const T = window.__FIRE_TESTS__;
+  const root = document.getElementById("results");
+  let total = 0, passed = 0;
+  for (const { name, fn } of tests) {
+    const groupDiv = document.createElement("div");
+    groupDiv.className = "group";
+    groupDiv.innerHTML = `<h2>${name}</h2>`;
+    let assertions;
+    try {
+      assertions = fn(T);
+    } catch (e) {
+      assertions = [{ pass: false, label: "threw exception", detail: e.message }];
+    }
+    for (const a of assertions) {
+      total++;
+      if (a.pass) passed++;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = `<span class="${a.pass ? "pass" : "fail"}">${a.pass ? "✓" : "✗"}</span><span class="name">${a.label}</span><span class="detail">${a.detail || ""}</span>`;
+      groupDiv.appendChild(row);
+    }
+    root.appendChild(groupDiv);
+  }
+  const status = document.getElementById("status");
+  status.className = `summary ${passed === total ? "ok" : "bad"}`;
+  status.textContent = `${passed} / ${total} assertions passed`;
+}
+
+setTimeout(run, 300);
+</script>
+
+</body>
+</html>
