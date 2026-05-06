@@ -21,7 +21,7 @@ const DEFAULT_STATE = {
   // Assumptions
   gkNominalReturn: 7.0,
   gkInflation: 2.0,
-  bgCgtRatePct: 10,
+  bgCgtRatePct: 0.0,
 
   // History
   gkHistory: [],
