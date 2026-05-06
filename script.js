@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const APP_VERSION = "20260505.7";
+const APP_VERSION = "20260506.0";
 
 // ─── GK CONFIGURATION ───
 const GK_CONFIG = {
@@ -11,19 +11,26 @@ const GK_CONFIG = {
 };
 
 // ─── UTILS ───
+const fmtEur = (n) => `€${Math.round(Number(n) || 0).toLocaleString("en-GB")}`;
+const fmtPct = (n, digits = 1) => `${(Number(n) || 0).toFixed(digits)}%`;
+
+// Labels describe the zone the WR sits in — they are not action commands.
+// GK rules adjust ANNUALLY at review time, not whenever WR transiently dips.
+// Use these in dashboard badges; reserve "CUT" / "RAISE" wording for the
+// per-year withdrawal-check panel that explicitly applies a rule.
 const getSWRTheme = (swr) => {
   if (swr <= 0) return { color: "#059669", label: "COVERED" };
   if (swr > 6.0) return { color: "#991b1b", label: "CRITICAL" };
   if (swr > 5.5) return { color: "#dc2626", label: "DANGER" };
-  if (swr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT −10%" };
+  if (swr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT ZONE" };
   if (swr > GK_CONFIG.IWR * 100) return { color: "#d97706", label: "ELEVATED" };
   if (swr > GK_CONFIG.UPPER_GUARDRAIL * 100) return { color: "#059669", label: "GK SAFE" };
-  return { color: "#2563eb", label: "RAISE +10%" };
+  return { color: "#2563eb", label: "PROSPERITY ZONE" };
 };
 
 function getGKZoneStyle(wr) {
-  if (wr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT −10%", bg: "#3a1e1e" };
-  if (wr < GK_CONFIG.UPPER_GUARDRAIL * 100) return { color: "#2563eb", label: "RAISE +10%", bg: "#1e2a3a" };
+  if (wr > GK_CONFIG.LOWER_GUARDRAIL * 100) return { color: "#dc2626", label: "CUT ZONE", bg: "#3a1e1e" };
+  if (wr < GK_CONFIG.UPPER_GUARDRAIL * 100) return { color: "#2563eb", label: "PROSPERITY ZONE", bg: "#1e2a3a" };
   return { color: "#059669", label: "GK SAFE", bg: "#1a2e1a" };
 }
 
@@ -136,7 +143,9 @@ async function saveToGist(token, gistId, state) {
 }
 
 // ─── CONSTANTS ───
-const FIRE_TARGETS = { aggressive: 550000, recommended: 625000, bulletproof: 700000 };
+// FIRE targets are NOT defined here — they are derived per-render from
+// `plovTotal` (today's actual after-tax draw) so changing expenses immediately
+// reshapes every milestone. See [script.js] in the Dashboard component.
 
 const PHASES = {
   employed: {
@@ -202,10 +211,33 @@ const TRIGGERS = [
 ];
 
 // ─── CALCULATION ENGINE ───
-function calcGKNextStep({ portfolio, lastWithdrawal, annualNominalReturn, inflation }) {
-  // Inflation Rule: skip raise if last year's return was negative
+//
+// Guyton-Klinger (2006) decision rules, applied annually in this order:
+//   1. Inflation Rule:        raise withdrawal by (capped) inflation, EXCEPT
+//                             skip if BOTH (a) prior return < 0 AND
+//                             (b) current WR > initial WR. (canonical 2-condition gate)
+//   2. Capital Preservation:  if current WR > 4.8% (120% of 4% IWR), cut 10%.
+//   3. Prosperity:            if current WR < 3.2% (80% of 4% IWR), raise 10%.
+//
+// `initialWR` defaults to GK_CONFIG.IWR (4.0%) — the reference rate set at
+// retirement onset. Pass an explicit value when projecting from a non-IWR start.
+function calcGKNextStep({
+  portfolio,
+  lastWithdrawal,
+  annualNominalReturn,
+  inflation,
+  initialWR = GK_CONFIG.IWR,
+}) {
+  // Portfolio-floor protection: if portfolio is gone, no withdrawal possible.
+  if (portfolio <= 0) {
+    return { proposedWithdrawal: 0, finalWithdrawal: 0, trigger: "DEPLETED", wr: 0 };
+  }
+
+  // Inflation Rule: canonical 2-condition skip (Guyton 2006).
   let proposedWithdrawal = lastWithdrawal;
-  if (annualNominalReturn >= 0) {
+  const currentWRPreRaise = lastWithdrawal / portfolio;
+  const skipInflationRaise = annualNominalReturn < 0 && currentWRPreRaise > initialWR;
+  if (!skipInflationRaise) {
     const capped = Math.min(inflation, GK_CONFIG.INFLATION_CAP);
     proposedWithdrawal = lastWithdrawal * (1 + capped);
   }
@@ -226,20 +258,37 @@ function calcGKNextStep({ portfolio, lastWithdrawal, annualNominalReturn, inflat
   return { proposedWithdrawal, finalWithdrawal, trigger, wr: finalWithdrawal / portfolio };
 }
 
-function runGKSimulation({ startPortfolio, startWithdrawal, nominalReturn, inflation, years = 40 }) {
+// runGKSimulation supports two modes:
+//   • Fixed (legacy):  pass scalar `nominalReturn` and `inflation`.
+//   • Path-driven:     pass arrays `returnPath` and `inflationPath` of length ≥ years.
+//                      Used by Monte Carlo and historical-cohort overlays.
+function runGKSimulation({
+  startPortfolio,
+  startWithdrawal,
+  nominalReturn,
+  inflation,
+  returnPath,
+  inflationPath,
+  years = 40,
+  initialWR,
+}) {
   const rows = [];
   let portfolio = startPortfolio;
   let withdrawal = startWithdrawal;
+  const seedWR = initialWR ?? (startPortfolio > 0 ? startWithdrawal / startPortfolio : GK_CONFIG.IWR);
 
   for (let year = 1; year <= years; year++) {
     const portfolioStart = portfolio;
+    const ret = returnPath ? returnPath[year - 1] : nominalReturn;
+    const inf = inflationPath ? inflationPath[year - 1] : inflation;
     const step = calcGKNextStep({
       portfolio,
       lastWithdrawal: withdrawal,
-      annualNominalReturn: nominalReturn,
-      inflation,
+      annualNominalReturn: ret,
+      inflation: inf,
+      initialWR: seedWR,
     });
-    const endPortfolio = Math.max(0, (portfolioStart - step.finalWithdrawal) * (1 + nominalReturn));
+    const endPortfolio = Math.max(0, (portfolioStart - step.finalWithdrawal) * (1 + ret));
     rows.push({
       year,
       portfolioStart,
@@ -248,6 +297,8 @@ function runGKSimulation({ startPortfolio, startWithdrawal, nominalReturn, infla
       finalWithdrawal: step.finalWithdrawal,
       wr: step.wr * 100,
       portfolioEnd: endPortfolio,
+      annualReturn: ret,
+      annualInflation: inf,
     });
     portfolio = endPortfolio;
     withdrawal = step.finalWithdrawal;
@@ -256,12 +307,110 @@ function runGKSimulation({ startPortfolio, startWithdrawal, nominalReturn, infla
   return rows;
 }
 
+// ─── MONTE CARLO ───
+//
+// Box-Muller transform: 2 uniforms → 1 standard-normal sample.
+function gaussianSample() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+// Build a single random return path: equity μ/σ blended with bond μ/σ at the
+// supplied equity-share weight. Bond returns are sampled independently — for
+// a personal dashboard this is a reasonable approximation of the actual
+// VWCE / Fixed Income / XEON / Cash mix.
+function sampleReturnPath({ years, equityShare, equityMu, equitySigma, bondMu, bondSigma }) {
+  const path = [];
+  for (let i = 0; i < years; i++) {
+    const eq = equityMu + equitySigma * gaussianSample();
+    const bd = bondMu   + bondSigma   * gaussianSample();
+    path.push(equityShare * eq + (1 - equityShare) * bd);
+  }
+  return path;
+}
+
+// Inflation path: AR(1)-ish, mean-reverting toward target, bounded by GK cap.
+function sampleInflationPath({ years, target, sigma }) {
+  const path = [];
+  let last = target;
+  for (let i = 0; i < years; i++) {
+    const drift = 0.6 * (target - last);
+    const shock = sigma * gaussianSample();
+    last = Math.max(-0.02, last + drift + shock);
+    path.push(last);
+  }
+  return path;
+}
+
+// Run N simulations, return P10/P50/P90 portfolio bands by year + summary stats.
+function runMonteCarlo({
+  startPortfolio,
+  startWithdrawal,
+  equityShare,
+  equityMu, equitySigma,
+  bondMu, bondSigma,
+  inflationTarget, inflationSigma,
+  years = 40,
+  paths = 1000,
+}) {
+  const portfolioByYear = Array.from({ length: years }, () => []);
+  let depleted = 0;
+  let preservationCutCount = 0; // # paths with ≥1 cut in years 1–10
+
+  for (let p = 0; p < paths; p++) {
+    const returnPath = sampleReturnPath({
+      years, equityShare,
+      equityMu, equitySigma,
+      bondMu, bondSigma,
+    });
+    const inflationPath = sampleInflationPath({
+      years, target: inflationTarget, sigma: inflationSigma,
+    });
+    const rows = runGKSimulation({
+      startPortfolio, startWithdrawal,
+      returnPath, inflationPath, years,
+    });
+
+    let cutEarly = false;
+    for (let y = 0; y < years; y++) {
+      const row = rows[y];
+      const value = row ? row.portfolioEnd : 0;
+      portfolioByYear[y].push(value);
+      if (row && row.trigger === "CAPITAL_PRESERVATION" && y < 10) cutEarly = true;
+    }
+    if (rows.length === 0 || rows[rows.length - 1].portfolioEnd <= 0) depleted++;
+    if (cutEarly) preservationCutCount++;
+  }
+
+  const pct = (arr, q) => {
+    const sorted = [...arr].sort((a, b) => a - b);
+    const idx = Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))));
+    return sorted[idx];
+  };
+
+  const bands = portfolioByYear.map((vals, i) => ({
+    year: i + 1,
+    p10: pct(vals, 0.10),
+    p50: pct(vals, 0.50),
+    p90: pct(vals, 0.90),
+  }));
+
+  return {
+    bands,
+    successRate: 1 - depleted / paths,
+    preservationCutRate: preservationCutCount / paths,
+    paths,
+  };
+}
+
 // ─── COMPONENTS ───
 function Num({ children, color = "#fff", size = 20, mono = true }) {
   return <span style={{ fontSize: size, fontWeight: 700, color, fontFamily: mono ? "monospace" : "inherit", lineHeight: 1 }}>{children}</span>;
 }
 
-function SWRBadge({ swr, size = "large" }) {
+const SWRBadge = React.memo(function SWRBadge({ swr, size = "large" }) {
   const isLg = size === "large";
   const flashStyle = useFlash(swr, "text");
   const { color, label } = getSWRTheme(swr);
@@ -282,9 +431,9 @@ function SWRBadge({ swr, size = "large" }) {
       <span style={{ fontSize: 9, color, fontWeight: 700, letterSpacing: "0.1em" }}>{label}</span>
     </div>
   );
-}
+});
 
-function Slider({ label, value, onChange, min, max, step, format, color = "#2563eb", suffix = "" }) {
+const Slider = React.memo(function Slider({ label, value, onChange, min, max, step, format, color = "#2563eb", suffix = "" }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
@@ -296,18 +445,18 @@ function Slider({ label, value, onChange, min, max, step, format, color = "#2563
         style={{ width: "100%", accentColor: color, height: 4 }} />
     </div>
   );
-}
+});
 
-function Card({ children, style = {}, highlight = false }) {
+const Card = React.memo(function Card({ children, style = {}, highlight = false }) {
   return (
     <div style={{
       background: "#111", border: `1px solid ${highlight ? "#333" : "#1a1a1a"}`,
       borderRadius: 10, padding: "18px 20px", ...style,
     }}>{children}</div>
   );
-}
+});
 
-function BucketRow({ bucketKey, alloc, portfolioValue, actualEur }) {
+const BucketRow = React.memo(function BucketRow({ bucketKey, alloc, portfolioValue, actualEur }) {
   const m = BUCKET_META[bucketKey];
   const targetEur = Math.round(portfolioValue * alloc.target / 100);
   const floorActive = alloc.floor && targetEur < alloc.floor;
@@ -338,7 +487,12 @@ function BucketRow({ bucketKey, alloc, portfolioValue, actualEur }) {
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span style={{ fontSize: 11, color: valFlash.color || "#666", fontFamily: "monospace", transition: valFlash.transition, textShadow: valFlash.textShadow }}>
               €{displayEur.toLocaleString()}
-              {hasActual && <span style={{ color: "#444" }}> / €{effectiveTarget.toLocaleString()}</span>}
+              {hasActual && (
+                <span style={{ color: "#444" }}>
+                  {" / "}€{effectiveTarget.toLocaleString()}
+                  {floorActive && <span style={{ color: "#f87171", marginLeft: 4 }}>(floor)</span>}
+                </span>
+              )}
             </span>
             <span style={{ fontSize: 17, fontWeight: 700, color: pctFlash.color || m.color, fontFamily: "monospace", transition: pctFlash.transition, textShadow: pctFlash.textShadow }}>{alloc.target}%</span>
           </div>
@@ -356,9 +510,9 @@ function BucketRow({ bucketKey, alloc, portfolioValue, actualEur }) {
       </div>
     </div>
   );
-}
+});
 
-function ProjectionRow({ label, months, eurVal, target, color }) {
+const ProjectionRow = React.memo(function ProjectionRow({ label, months, eurVal, target, color }) {
   const flashStyle = useFlash(months, "text");
 
   if (months === null || months === Infinity) return (
@@ -381,7 +535,7 @@ function ProjectionRow({ label, months, eurVal, target, color }) {
       </div>
     </div>
   );
-}
+});
 
 // ─── MAIN ───
 function Dashboard() {
@@ -410,6 +564,20 @@ function Dashboard() {
 
   const [bgTax10, setBgTax10] = useState(false);
   const [realReturn, setRealReturn] = useState(5);
+  // Cost basis = total € invested net of withdrawn principal. Used to compute
+  // gains fraction for capital-gains tax. 0 = "not set" → falls back to a
+  // conservative 50% gains assumption (legacy default before this fix).
+  const [costBasis, setCostBasis] = useState(0);
+  // Beckham Law (Spain): 0% CGT on foreign-source gains for 6 years from
+  // entering Spanish Social Security. Slider lets user count down.
+  const [valenciaYearsRemaining, setValenciaYearsRemaining] = useState(6);
+  // Post-Beckham Spanish CGT rate applied to gains fraction. ES brackets
+  // 19/21/23/27/28% — 21% is a reasonable midpoint for a €25–60k draw.
+  const [spainPostBeckhamRate, setSpainPostBeckhamRate] = useState(0.21);
+  // "Die With Zero" planning: target end-of-life portfolio + life expectancy.
+  const [dwzLifeExpectancy, setDwzLifeExpectancy] = useState(88);
+  const [dwzCurrentAge, setDwzCurrentAge] = useState(40);
+  const [dwzTerminalLegacy, setDwzTerminalLegacy] = useState(0);
   const [showTriggers, setShowTriggers] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("runway");
@@ -442,6 +610,15 @@ function Dashboard() {
   const [gkNominalReturn, setGkNominalReturn] = useState(7.5);
   const [gkInflation, setGkInflation] = useState(2.5);
   const [gkHistory, setGkHistory] = useState([]);
+
+  // ─── MONTE CARLO ───
+  // We don't recompute on every render — it's ~50ms for 1000 paths.
+  // User clicks a button; result is held in state until inputs change visibly.
+  const [mcResult, setMcResult] = useState(null);
+  const [mcRunning, setMcRunning] = useState(false);
+  const [mcEquitySigma, setMcEquitySigma] = useState(18); // VWCE annualised σ
+  const [mcInflationSigma, setMcInflationSigma] = useState(1.5);
+  const [mcPaths, setMcPaths] = useState(1000);
   const [gkLastReturn, setGkLastReturn] = useState(7.5);
   const [gkThisInflation, setGkThisInflation] = useState(2.5);
   const [showAddGKEntry, setShowAddGKEntry] = useState(false);
@@ -473,6 +650,66 @@ function Dashboard() {
     }
   };
 
+  // Single source of truth: the persisted state shape. Used by both save
+  // and load paths to avoid drift between them.
+  const buildPersistState = () => ({
+    bucketVWCE, bucketXEON, bucketFixed, bucketCash,
+    phase, mainIncome, annualExpense, wifeIncome,
+    schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
+    apartmentRent, resortCost, bgTax10, realReturn, flags,
+    gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
+    costBasis, valenciaYearsRemaining, spainPostBeckhamRate,
+    dwzCurrentAge, dwzLifeExpectancy, dwzTerminalLegacy,
+  });
+
+  // Apply a saved state object to component state, with backwards-compat for
+  // the old single-`portfolio` schema and the old `monthlyContrib` field.
+  const applyHydratedState = (s) => {
+    if (!s) return;
+    if (s.bucketVWCE !== undefined) {
+      setBucketVWCE(s.bucketVWCE);
+      setBucketXEON(s.bucketXEON);
+      setBucketFixed(s.bucketFixed);
+      setBucketCash(Math.max(0, s.bucketCash));
+    } else if (s.portfolio) {
+      // Legacy single-portfolio migration: split by current phase's targets.
+      const pd = PHASES[s.phase || "employed"];
+      const t = s.portfolio;
+      const v = Math.round(t * pd.buckets.growth.target / 100);
+      const x = Math.round(t * pd.buckets.fortress.target / 100);
+      const f = Math.round(t * pd.buckets.termShield.target / 100);
+      setBucketVWCE(v);
+      setBucketXEON(x);
+      setBucketFixed(f);
+      setBucketCash(Math.max(0, t - v - x - f));
+    }
+    if (s.phase) setPhase(s.phase);
+    if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
+    else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
+    if (s.annualExpense) setAnnualExpense(s.annualExpense);
+    if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
+    if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
+    if (s.antiAtrophy !== undefined) setAntiAtrophy(s.antiAtrophy);
+    if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
+    if (s.resortFees !== undefined) setResortFees(s.resortFees);
+    if (s.buildCost !== undefined) setBuildCost(s.buildCost);
+    if (s.apartmentRent !== undefined) setApartmentRent(s.apartmentRent);
+    if (s.resortCost !== undefined) setResortCost(s.resortCost);
+    if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
+    if (s.realReturn !== undefined) setRealReturn(s.realReturn);
+    if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
+    if (s.gkBaseWithdrawal !== undefined) setGkBaseWithdrawal(s.gkBaseWithdrawal);
+    if (s.gkNominalReturn !== undefined) setGkNominalReturn(s.gkNominalReturn);
+    if (s.gkInflation !== undefined) setGkInflation(s.gkInflation);
+    if (s.gkHistory) setGkHistory(s.gkHistory);
+    if (s.costBasis !== undefined) setCostBasis(s.costBasis);
+    if (s.valenciaYearsRemaining !== undefined) setValenciaYearsRemaining(s.valenciaYearsRemaining);
+    if (s.spainPostBeckhamRate !== undefined) setSpainPostBeckhamRate(s.spainPostBeckhamRate);
+    if (s.dwzCurrentAge !== undefined) setDwzCurrentAge(s.dwzCurrentAge);
+    if (s.dwzLifeExpectancy !== undefined) setDwzLifeExpectancy(s.dwzLifeExpectancy);
+    if (s.dwzTerminalLegacy !== undefined) setDwzTerminalLegacy(s.dwzTerminalLegacy);
+  };
+
   useEffect(() => {
     (async () => {
       // Load Gist credentials from their own localStorage keys
@@ -497,73 +734,31 @@ function Dashboard() {
         s = await loadState();
       }
 
-      if (s) {
-        if (s.bucketVWCE !== undefined) {
-          setBucketVWCE(s.bucketVWCE);
-          setBucketXEON(s.bucketXEON);
-          setBucketFixed(s.bucketFixed);
-          setBucketCash(s.bucketCash);
-        } else if (s.portfolio) {
-          // Migrate single portfolio value → split by saved phase targets
-          const pd = PHASES[s.phase || "employed"];
-          const t = s.portfolio;
-          const v = Math.round(t * pd.buckets.growth.target / 100);
-          const x = Math.round(t * pd.buckets.fortress.target / 100);
-          const f = Math.round(t * pd.buckets.termShield.target / 100);
-          setBucketVWCE(v);
-          setBucketXEON(x);
-          setBucketFixed(f);
-          setBucketCash(t - v - x - f);
-        }
-        if (s.phase) setPhase(s.phase);
-        if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
-        else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
-        if (s.annualExpense) setAnnualExpense(s.annualExpense);
-        if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
-        if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
-        if (s.antiAtrophy !== undefined) setAntiAtrophy(s.antiAtrophy);
-        if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
-        if (s.resortFees !== undefined) setResortFees(s.resortFees);
-        if (s.buildCost !== undefined) setBuildCost(s.buildCost);
-        if (s.apartmentRent !== undefined) setApartmentRent(s.apartmentRent);
-        if (s.resortCost !== undefined) setResortCost(s.resortCost);
-        if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
-        if (s.realReturn !== undefined) setRealReturn(s.realReturn);
-        if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
-        if (s.gkBaseWithdrawal !== undefined) setGkBaseWithdrawal(s.gkBaseWithdrawal);
-        if (s.gkNominalReturn !== undefined) setGkNominalReturn(s.gkNominalReturn);
-        if (s.gkInflation !== undefined) setGkInflation(s.gkInflation);
-        if (s.gkHistory) setGkHistory(s.gkHistory);
-      }
+      applyHydratedState(s);
       setLoaded(true);
     })();
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
-    const state = {
-      bucketVWCE, bucketXEON, bucketFixed, bucketCash,
-      phase, mainIncome, annualExpense, wifeIncome,
-      schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
-      apartmentRent, resortCost, bgTax10, realReturn, flags,
-      gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
-    };
+    const state = buildPersistState();
+    // localStorage write is synchronous and cheap — no need to debounce.
+    saveState(state);
+    // Only the network round-trip is debounced.
+    if (!(ghToken && gistId)) return;
     const t = setTimeout(async () => {
-      saveState(state); // localStorage backup always
-      if (ghToken && gistId) {
-        setSyncStatus("syncing");
-        try {
-          await saveToGist(ghToken, gistId, state);
-          setSyncStatus("ok");
-          setSyncError("");
-        } catch (e) {
-          setSyncError(e.message);
-          setSyncStatus("error");
-        }
+      setSyncStatus("syncing");
+      try {
+        await saveToGist(ghToken, gistId, state);
+        setSyncStatus("ok");
+        setSyncError("");
+      } catch (e) {
+        setSyncError(e.message);
+        setSyncStatus("error");
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [loaded, bucketVWCE, bucketXEON, bucketFixed, bucketCash, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory, ghToken, gistId]);
+  }, [loaded, bucketVWCE, bucketXEON, bucketFixed, bucketCash, phase, mainIncome, annualExpense, wifeIncome, schoolCost, antiAtrophy, travelBudget, resortFees, buildCost, apartmentRent, resortCost, bgTax10, realReturn, flags, gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory, costBasis, valenciaYearsRemaining, spainPostBeckhamRate, dwzCurrentAge, dwzLifeExpectancy, dwzTerminalLegacy, ghToken, gistId]);
 
   const portfolio = bucketVWCE + bucketXEON + bucketFixed + bucketCash;
 
@@ -583,9 +778,19 @@ function Dashboard() {
   const totalMonthlyIncome      = effectiveMainIncome + (flags.extraIncome ? wifeIncome : 0);
   const netMonthlyCashflow      = totalMonthlyIncome - plovGross / 12;
   const effectiveMonthlyContrib = Math.max(0, netMonthlyCashflow);
-  const calcDrawWithTax = (grossExpense, additionalIncome = 0) => {
+
+  // Gains fraction: portion of any sale that is taxable gain, not basis return.
+  // costBasis = 0 → fallback to 50% (legacy assumption, conservative midpoint).
+  // Otherwise: gain share = 1 − basis/portfolio, clamped to [0, 1].
+  const gainsFraction = costBasis > 0 && portfolio > 0
+    ? Math.max(0, Math.min(1, 1 - costBasis / portfolio))
+    : 0.5;
+
+  // Tax-drag formula: applied to the *gain* portion of the draw at the chosen rate.
+  // taxRate parameter lets each scenario plug in its own jurisdiction.
+  const calcDrawWithTax = (grossExpense, additionalIncome = 0, taxRate = bgTax10 ? 0.10 : 0) => {
     const netDraw = Math.max(0, grossExpense - additionalIncome);
-    const taxDrag = bgTax10 ? netDraw * 0.5 * 0.10 : 0;
+    const taxDrag = taxRate > 0 ? netDraw * gainsFraction * taxRate : 0;
     return netDraw + taxDrag;
   };
 
@@ -611,8 +816,13 @@ function Dashboard() {
   const travelNetDraw = calcDrawWithTax(plovGross + effectiveTravelBudget);
   const travelSWR = portfolio > 0 ? (travelNetDraw / portfolio) * 100 : 0;
 
-  const valBase = 36000;
-  const valTotal = Math.max(0, valBase + effectiveSchoolCost - netApartmentRent);
+  // Valencia / Spain: Beckham Law gives 0% CGT for 6 years from arrival, then
+  // standard ES savings tax brackets (we use a single midpoint rate). The
+  // valenciaYearsRemaining slider tracks years left in the regime — when it
+  // hits 0, the post-Beckham rate kicks in.
+  const valGrossNeed = 36000 + effectiveSchoolCost; // baseline ES living cost
+  const valTaxRate = valenciaYearsRemaining > 0 ? 0 : spainPostBeckhamRate;
+  const valTotal = calcDrawWithTax(valGrossNeed, netApartmentRent, valTaxRate);
   const valSWR = portfolio > 0 ? (valTotal / portfolio) * 100 : 0;
 
   // Runway
@@ -622,15 +832,29 @@ function Dashboard() {
   const monthlyBurn = plovTotal / 12;
   const runwayMonths = monthlyBurn > 0 ? Math.round((fortressEur + termEur + cashEur) / monthlyBurn) : 999;
 
+  // Closed-form months-to-target. Assumes:
+  //   • portfolio P grows at real rate r/12 per month
+  //   • monthly contribution c stays flat in REAL €
+  //     (i.e. user's salary tracks inflation — a sane FIRE assumption)
+  //   • target is a today's-€ FIRE target derived from current expenses
+  // → result is "months until portfolio has the purchasing power of `target`".
+  // FV = P·(1+r)^n + c·((1+r)^n − 1)/r  ⇒  n = ln((target·r + c)/(P·r + c)) / ln(1+r)
   const monthsTo = useCallback((target) => {
     if (portfolio >= target) return null;
     const r = realReturn / 100 / 12;
     const c = effectiveMonthlyContrib;
-    for (let n = 1; n <= 360; n++) {
-      const fv = portfolio * Math.pow(1 + r, n) + c * (Math.pow(1 + r, n) - 1) / (r || 0.0001);
-      if (fv >= target) return n;
+    if (r === 0) {
+      if (c <= 0) return Infinity;
+      return Math.min(360, Math.max(1, Math.ceil((target - portfolio) / c)));
     }
-    return 360;
+    const numerator = target * r + c;
+    const denominator = portfolio * r + c;
+    if (denominator <= 0) return Infinity;
+    const ratio = numerator / denominator;
+    if (ratio <= 1) return null; // already past
+    const n = Math.log(ratio) / Math.log(1 + r);
+    if (!Number.isFinite(n) || n < 0) return Infinity;
+    return Math.min(360, Math.max(1, Math.ceil(n)));
   }, [portfolio, realReturn, effectiveMonthlyContrib]);
 
   const projections = useMemo(() => ({
@@ -644,6 +868,10 @@ function Dashboard() {
   const fireProgress = Math.min(100, (portfolio / fireTargetRecommended) * 100);
 
   // ─── GK DERIVED STATE ───
+  // effectiveBaseWithdrawal is the *gross* annual draw — the amount sold from
+  // the portfolio. plovTotal already includes tax drag (gross = net + tax),
+  // so the GK simulation projects gross sales forward. Net spending each year
+  // depends on that year's gains fraction and is shown via the live tax card.
   const effectiveBaseWithdrawal = gkBaseWithdrawal > 0 ? gkBaseWithdrawal : plovTotal;
   const currentGKWR = portfolio > 0 ? (effectiveBaseWithdrawal / portfolio) * 100 : 0;
 
@@ -694,6 +922,86 @@ function Dashboard() {
     inflation: gkInflation / 100,
     years: 40,
   }), [portfolio, effectiveBaseWithdrawal, gkNominalReturn, gkInflation]);
+
+  // ─── MONTE CARLO RUNNER ───
+  // Uses Box-Muller-sampled return paths; equity-share derived from VWCE
+  // proportion. Runs synchronously in a setTimeout so the UI can paint a
+  // "Running…" state first.
+  const handleRunMC = useCallback(() => {
+    setMcRunning(true);
+    setTimeout(() => {
+      const equityShare = portfolio > 0 ? Math.min(1, Math.max(0, bucketVWCE / portfolio)) : 0.7;
+      const result = runMonteCarlo({
+        startPortfolio: portfolio,
+        startWithdrawal: effectiveBaseWithdrawal,
+        equityShare,
+        equityMu: gkNominalReturn / 100,
+        equitySigma: mcEquitySigma / 100,
+        bondMu: 0.03,
+        bondSigma: 0.04,
+        inflationTarget: gkInflation / 100,
+        inflationSigma: mcInflationSigma / 100,
+        years: 40,
+        paths: mcPaths,
+      });
+      setMcResult(result);
+      setMcRunning(false);
+    }, 30);
+  }, [portfolio, bucketVWCE, effectiveBaseWithdrawal, gkNominalReturn, gkInflation, mcEquitySigma, mcInflationSigma, mcPaths]);
+
+  // ─── DIE WITH ZERO ───
+  // Solve for the constant real-€ withdrawal that depletes portfolio to
+  // dwzTerminalLegacy by age dwzLifeExpectancy, given expected real return.
+  // PV(needed) = portfolio − terminalLegacy/(1+nominal)^N
+  // Annuity factor = (1 − (1+r_real)^−N) / r_real
+  // → annual real withdrawal = PV / annuity_factor
+  const dwz = useMemo(() => {
+    const years = Math.max(1, dwzLifeExpectancy - dwzCurrentAge);
+    const r = (gkNominalReturn - gkInflation) / 100;
+    const nom = gkNominalReturn / 100;
+    const presentTerminal = dwzTerminalLegacy / Math.pow(1 + nom, years);
+    const available = Math.max(0, portfolio - presentTerminal);
+    const annuityFactor = r === 0 ? years : (1 - Math.pow(1 + r, -years)) / r;
+    const realAnnualWithdrawal = annuityFactor > 0 ? available / annuityFactor : 0;
+    const gap = realAnnualWithdrawal - effectiveBaseWithdrawal;
+    return { years, realAnnualWithdrawal, gap, available };
+  }, [portfolio, dwzCurrentAge, dwzLifeExpectancy, dwzTerminalLegacy, gkNominalReturn, gkInflation, effectiveBaseWithdrawal]);
+
+  // ─── TAX-AWARE WITHDRAWAL OPTIMISER ───
+  // Given a target gross draw, drain in tax-optimal order:
+  //   Cash (0% gains) → XEON (~5% gains, mostly €STR interest)
+  //   → Fixed Income (gainsFraction) → VWCE (gainsFraction).
+  // Compare to a "naive" same-ratio draw (sell proportionally) to highlight
+  // the saving. Only meaningful when bgTax10 is on or Beckham has expired.
+  const taxOptimisation = useMemo(() => {
+    const targetGross = effectiveBaseWithdrawal;
+    if (targetGross <= 0) return null;
+    const cgtRate = bgTax10 ? 0.10 : 0;
+    if (cgtRate === 0) return null;
+
+    const order = [
+      { name: "Cash", balance: bucketCash,  gain: 0,                color: "#6b7280" },
+      { name: "XEON", balance: bucketXEON,  gain: 0.05,             color: "#059669" },
+      { name: "Fixed Income", balance: bucketFixed, gain: gainsFraction, color: "#d97706" },
+      { name: "VWCE", balance: bucketVWCE,  gain: gainsFraction,    color: "#2563eb" },
+    ];
+    let need = targetGross;
+    const draws = [];
+    let totalTax = 0;
+    for (const slot of order) {
+      if (need <= 0) break;
+      const take = Math.min(need, slot.balance);
+      if (take <= 0) continue;
+      const tax = take * slot.gain * cgtRate;
+      draws.push({ ...slot, take, tax });
+      totalTax += tax;
+      need -= take;
+    }
+    const shortfall = Math.max(0, need);
+    // Naive: assume the entire draw realizes at portfolio-level gain fraction.
+    const naiveTax = targetGross * gainsFraction * cgtRate;
+    return { draws, totalTax, naiveTax, savings: naiveTax - totalTax, shortfall, targetGross };
+  }, [effectiveBaseWithdrawal, bgTax10, bucketCash, bucketXEON, bucketFixed, bucketVWCE, gainsFraction]);
 
   // Last history entry's withdrawal (for add-entry calc)
   const lastHistoryWithdrawal = gkHistory.length > 0
@@ -770,47 +1078,11 @@ function Dashboard() {
         const s = await loadFromGist(token, id);
         setGistId(id);
         localStorage.setItem("harari-gist-id", id);
-        if (s.bucketVWCE !== undefined) {
-          setBucketVWCE(s.bucketVWCE); setBucketXEON(s.bucketXEON);
-          setBucketFixed(s.bucketFixed); setBucketCash(s.bucketCash);
-        } else if (s.portfolio) {
-          const pd = PHASES[s.phase || "employed"];
-          const t = s.portfolio;
-          const v = Math.round(t * pd.buckets.growth.target / 100);
-          const x = Math.round(t * pd.buckets.fortress.target / 100);
-          const f = Math.round(t * pd.buckets.termShield.target / 100);
-          setBucketVWCE(v); setBucketXEON(x); setBucketFixed(f); setBucketCash(t - v - x - f);
-        }
-        if (s.phase) setPhase(s.phase);
-        if (s.mainIncome !== undefined) setMainIncome(s.mainIncome);
-        else if (s.monthlyContrib !== undefined) setMainIncome(s.monthlyContrib);
-        if (s.annualExpense) setAnnualExpense(s.annualExpense);
-        if (s.wifeIncome !== undefined) setWifeIncome(s.wifeIncome);
-        if (s.schoolCost !== undefined) setSchoolCost(s.schoolCost);
-        if (s.antiAtrophy !== undefined) setAntiAtrophy(s.antiAtrophy);
-        if (s.travelBudget !== undefined) setTravelBudget(s.travelBudget);
-        if (s.resortFees !== undefined) setResortFees(s.resortFees);
-        if (s.buildCost !== undefined) setBuildCost(s.buildCost);
-        if (s.apartmentRent !== undefined) setApartmentRent(s.apartmentRent);
-        if (s.resortCost !== undefined) setResortCost(s.resortCost);
-        if (s.bgTax10 !== undefined) setBgTax10(s.bgTax10);
-        if (s.realReturn !== undefined) setRealReturn(s.realReturn);
-        if (s.flags) setFlags(f => ({ ...f, ...s.flags }));
-        if (s.gkBaseWithdrawal !== undefined) setGkBaseWithdrawal(s.gkBaseWithdrawal);
-        if (s.gkNominalReturn !== undefined) setGkNominalReturn(s.gkNominalReturn);
-        if (s.gkInflation !== undefined) setGkInflation(s.gkInflation);
-        if (s.gkHistory) setGkHistory(s.gkHistory);
+        applyHydratedState(s);
         setSyncStatus("ok");
       } else {
         // No Gist ID yet — first-time setup: create a new Gist with current state
-        const state = {
-          bucketVWCE, bucketXEON, bucketFixed, bucketCash,
-          phase, mainIncome, annualExpense, wifeIncome,
-          schoolCost, antiAtrophy, travelBudget, resortFees, buildCost,
-          apartmentRent, resortCost, bgTax10, realReturn, flags,
-          gkBaseWithdrawal, gkNominalReturn, gkInflation, gkHistory,
-        };
-        const newId = await saveToGist(token, "", state);
+        const newId = await saveToGist(token, "", buildPersistState());
         setGistId(newId);
         setGistIdInput(newId);
         localStorage.setItem("harari-gist-id", newId);
@@ -1046,6 +1318,97 @@ function Dashboard() {
             {syncStatus === "error" && (
               <div style={{ marginTop: 8, fontSize: 11, color: "#f87171" }}>Error: {syncError}</div>
             )}
+
+            <div style={{ height: 1, background: "#222", margin: "16px 0" }} />
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Tax & Decumulation Planning</div>
+            <div style={{ fontSize: 11, color: "#555", marginBottom: 12, lineHeight: 1.6 }}>
+              <strong style={{ color: "#888" }}>Cost basis</strong> = total € invested net of withdrawn principal.
+              Used to compute the gain-fraction of any sale, which drives capital-gains tax drag.
+              0 falls back to a 50% gain assumption (legacy default).
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>
+                  Cost basis (€) — gains: <strong style={{ color: "#ccc" }}>{(gainsFraction * 100).toFixed(0)}%</strong> of any sale
+                </div>
+                <input
+                  type="number" min={0} step={1000}
+                  value={costBasis}
+                  onChange={e => setCostBasis(Math.max(0, Number(e.target.value) || 0))}
+                  placeholder="0 → assume 50% gain"
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>
+                  Beckham Law years remaining
+                </div>
+                <input
+                  type="number" min={0} max={6} step={1}
+                  value={valenciaYearsRemaining}
+                  onChange={e => setValenciaYearsRemaining(Math.max(0, Math.min(6, Number(e.target.value) || 0)))}
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>
+                  Spanish CGT after Beckham (%)
+                </div>
+                <input
+                  type="number" min={0} max={50} step={0.5}
+                  value={(spainPostBeckhamRate * 100).toFixed(1)}
+                  onChange={e => setSpainPostBeckhamRate(Math.max(0, Math.min(0.5, (Number(e.target.value) || 0) / 100)))}
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Current age</div>
+                <input
+                  type="number" min={18} max={100} step={1}
+                  value={dwzCurrentAge}
+                  onChange={e => setDwzCurrentAge(Math.max(18, Math.min(100, Number(e.target.value) || 40)))}
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Life expectancy (DWZ horizon)</div>
+                <input
+                  type="number" min={70} max={110} step={1}
+                  value={dwzLifeExpectancy}
+                  onChange={e => setDwzLifeExpectancy(Math.max(70, Math.min(110, Number(e.target.value) || 88)))}
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Terminal legacy (€ at end of life)</div>
+                <input
+                  type="number" min={0} step={5000}
+                  value={dwzTerminalLegacy}
+                  onChange={e => setDwzTerminalLegacy(Math.max(0, Number(e.target.value) || 0))}
+                  style={{
+                    width: "100%", padding: "8px 10px", background: "#0d0d0d", border: "1px solid #333",
+                    borderRadius: 6, color: "#ddd", fontSize: 12, fontFamily: "monospace", outline: "none",
+                  }}
+                />
+              </div>
+            </div>
           </div>
         )}
         {showSettings ? null : <div style={{ marginBottom: 20 }} />}
@@ -1559,7 +1922,7 @@ function Dashboard() {
                     color: "#d97706",
                     trigger: "Every year (default)",
                     action: "Raise withdrawal by CPI, capped at 6%",
-                    exception: "SKIP entirely if last year's return was negative",
+                    exception: "SKIP if BOTH (a) last year's return was negative AND (b) current WR > initial WR (canonical 2-condition gate)",
                     why: "Preserves your real purchasing power in normal years. The skip clause prevents you from compounding your withdrawal during a bad market year — giving the portfolio a chance to recover before you demand more from it.",
                     example: "Base €25,000, CPI = 3% → new amount €25,750. But if last year was −10%: amount stays €25,000.",
                   },
@@ -1811,10 +2174,10 @@ function Dashboard() {
               </div>
 
               <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace", minWidth: 520 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace", minWidth: 600 }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid #333" }}>
-                      {["Yr", "Portfolio Start", "Proposed", "Trigger", "Withdrawal", "WR", "End Balance"].map(h => (
+                      {["Yr", "Portfolio Start", "Trigger", "Withdrawal (nominal)", "WR", "End Balance (nominal)", "End Balance (today's €)"].map(h => (
                         <th key={h} style={{ padding: "6px 8px", textAlign: h === "Yr" ? "center" : "right", color: "#444", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>{h}</th>
                       ))}
                     </tr>
@@ -1823,6 +2186,9 @@ function Dashboard() {
                     {simRows.map(row => {
                       const wrStyle = getSWRTheme(row.wr);
                       const isKeyYear = [5, 10, 15, 20, 25, 30, 35, 40].includes(row.year);
+                      // Real (today's-€) value: deflate nominal balance by cumulative inflation.
+                      const cumInflation = Math.pow(1 + (gkInflation / 100), row.year);
+                      const realEnd = row.portfolioEnd / cumInflation;
                       return (
                         <tr key={row.year} style={{
                           borderBottom: "1px solid #0f0f0f",
@@ -1831,9 +2197,9 @@ function Dashboard() {
                         }}>
                           <td style={{ padding: "5px 8px", textAlign: "center", color: isKeyYear ? "#fff" : "#666", fontWeight: isKeyYear ? 700 : 400 }}>{row.year}</td>
                           <td style={{ padding: "5px 8px", textAlign: "right", color: "#888" }}>€{Math.round(row.portfolioStart / 1000)}k</td>
-                          <td style={{ padding: "5px 8px", textAlign: "right", color: "#666" }}>€{Math.round(row.proposedWithdrawal / 1000)}k</td>
                           <td style={{ padding: "5px 8px", textAlign: "right" }}>
-                            {row.trigger ? (
+                            {row.trigger === "DEPLETED" ? <span style={{ fontSize: 9, color: "#dc2626", fontWeight: 700 }}>—</span>
+                             : row.trigger ? (
                               <span style={{
                                 fontSize: 9, padding: "2px 5px", borderRadius: 3, fontWeight: 700,
                                 background: row.trigger === "PROSPERITY" ? "#1e3a5f" : "#7f1d1d",
@@ -1848,13 +2214,196 @@ function Dashboard() {
                           <td style={{ padding: "5px 8px", textAlign: "right", color: row.portfolioEnd > 0 ? "#059669" : "#dc2626", fontWeight: isKeyYear ? 700 : 400 }}>
                             {row.portfolioEnd > 0 ? `€${Math.round(row.portfolioEnd / 1000)}k` : "DEPLETED"}
                           </td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", color: row.portfolioEnd > 0 ? "#94a3b8" : "#444", fontWeight: isKeyYear ? 700 : 400 }}>
+                            {row.portfolioEnd > 0 ? `€${Math.round(realEnd / 1000)}k` : "—"}
+                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                <div style={{ marginTop: 8, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                  <strong style={{ color: "#888" }}>Withdrawal</strong> = gross sale (pre-tax). Net spending = gross − tax-drag,
+                  where drag = gain-fraction × CGT rate. <strong style={{ color: "#888" }}>End balance (today's €)</strong> deflates
+                  the nominal balance by cumulative inflation, so you can read it as purchasing power.
+                </div>
               </div>
             </Card>
+
+            {/* MONTE CARLO OVERLAY */}
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Monte Carlo — Sequence-of-Returns Risk</div>
+                  <div style={{ fontSize: 10, color: "#555", marginTop: 2, lineHeight: 1.5 }}>
+                    Stochastic 40-year sim across {mcPaths.toLocaleString()} paths. Tests GK guardrails against random sequence risk —
+                    the linear table above can't, because flat returns never trigger Capital Preservation cuts.
+                  </div>
+                </div>
+                <button onClick={handleRunMC} disabled={mcRunning} style={{
+                  padding: "8px 16px",
+                  background: mcRunning ? "#222" : "#1e3a5f",
+                  border: `1px solid ${mcRunning ? "#333" : "#2563eb"}`,
+                  borderRadius: 6, color: mcRunning ? "#666" : "#93c5fd",
+                  fontSize: 12, fontWeight: 700, cursor: mcRunning ? "default" : "pointer",
+                  fontFamily: "inherit", whiteSpace: "nowrap",
+                }}>
+                  {mcRunning ? "Running…" : (mcResult ? "Re-run" : "Run Simulation")}
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <Slider label="Equity σ (annualised)" value={mcEquitySigma} onChange={setMcEquitySigma} min={8} max={30} step={0.5} color="#2563eb" format={v => v.toFixed(1)} suffix="%" />
+                <Slider label="Inflation σ" value={mcInflationSigma} onChange={setMcInflationSigma} min={0.5} max={5} step={0.1} color="#d97706" format={v => v.toFixed(1)} suffix="%" />
+                <Slider label="# paths" value={mcPaths} onChange={setMcPaths} min={200} max={3000} step={200} color="#8b5cf6" format={v => v.toLocaleString()} />
+              </div>
+
+              {mcResult && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                    <div style={{ padding: "12px 14px", background: mcResult.successRate >= 0.95 ? "#052e16" : mcResult.successRate >= 0.85 ? "#3a2a0a" : "#3a1e1e", borderRadius: 8, border: `1px solid ${mcResult.successRate >= 0.95 ? "#059669" : mcResult.successRate >= 0.85 ? "#d97706" : "#dc2626"}` }}>
+                      <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Success rate</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: mcResult.successRate >= 0.95 ? "#22c55e" : mcResult.successRate >= 0.85 ? "#f59e0b" : "#dc2626", fontFamily: "monospace" }}>
+                        {(mcResult.successRate * 100).toFixed(1)}%
+                      </div>
+                      <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>paths terminating &gt; €0</div>
+                    </div>
+                    <div style={{ padding: "12px 14px", background: "#0d0d0d", borderRadius: 8, border: "1px solid #1a1a1a" }}>
+                      <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Cut-rule fires (yr 1–10)</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", fontFamily: "monospace" }}>
+                        {(mcResult.preservationCutRate * 100).toFixed(1)}%
+                      </div>
+                      <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>paths needing ≥1 −10% cut</div>
+                    </div>
+                    <div style={{ padding: "12px 14px", background: "#0d0d0d", borderRadius: 8, border: "1px solid #1a1a1a" }}>
+                      <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Median end balance</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", fontFamily: "monospace" }}>
+                        €{Math.round(mcResult.bands[mcResult.bands.length - 1].p50 / 1000)}k
+                      </div>
+                      <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>nominal at year {mcResult.bands.length}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace", minWidth: 480 }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #333" }}>
+                          {["Yr", "P10 (worst 10%)", "P50 (median)", "P90 (best 10%)"].map(h => (
+                            <th key={h} style={{ padding: "6px 8px", textAlign: h === "Yr" ? "center" : "right", color: "#444", fontWeight: 600, fontSize: 10 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mcResult.bands.filter(b => [5, 10, 15, 20, 25, 30, 35, 40].includes(b.year)).map(b => (
+                          <tr key={b.year} style={{ borderBottom: "1px solid #0f0f0f" }}>
+                            <td style={{ padding: "5px 8px", textAlign: "center", color: "#fff", fontWeight: 700 }}>{b.year}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", color: b.p10 > 0 ? "#dc2626" : "#7f1d1d" }}>{b.p10 > 0 ? `€${Math.round(b.p10/1000)}k` : "DEPLETED"}</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", color: "#ccc" }}>€{Math.round(b.p50/1000)}k</td>
+                            <td style={{ padding: "5px 8px", textAlign: "right", color: "#22c55e" }}>€{Math.round(b.p90/1000)}k</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: 8, fontSize: 10, color: "#555", lineHeight: 1.5 }}>
+                      <strong style={{ color: "#888" }}>P10</strong> = 10% of paths ended at this value or worse (the bad-luck tail GK is meant to defend against).
+                      Equity μ = {gkNominalReturn.toFixed(1)}% σ = {mcEquitySigma.toFixed(1)}%; bonds μ = 3% σ = 4%; equity share derived from VWCE/portfolio = {(portfolio > 0 ? bucketVWCE / portfolio * 100 : 0).toFixed(0)}%.
+                    </div>
+                  </div>
+                </>
+              )}
+              {!mcResult && !mcRunning && (
+                <div style={{ padding: "16px", background: "#0d0d0d", borderRadius: 6, fontSize: 11, color: "#666", lineHeight: 1.5, textAlign: "center" }}>
+                  Click <strong style={{ color: "#93c5fd" }}>Run Simulation</strong> to stress-test your GK plan against {mcPaths.toLocaleString()} random return sequences.
+                </div>
+              )}
+            </Card>
+
+            {/* DIE WITH ZERO */}
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Die With Zero — Optimal Withdrawal</div>
+                  <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>
+                    Constant real-€ withdrawal that lands portfolio on €{dwzTerminalLegacy.toLocaleString()} legacy at age {dwzLifeExpectancy} (set in Settings).
+                    Real return assumed: {(gkNominalReturn - gkInflation).toFixed(1)}%.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div style={{ padding: "12px 14px", background: "#0d0d0d", borderRadius: 8, border: "1px solid #1a1a1a" }}>
+                  <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Horizon</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", fontFamily: "monospace" }}>{dwz.years} yrs</div>
+                  <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>age {dwzCurrentAge} → {dwzLifeExpectancy}</div>
+                </div>
+                <div style={{ padding: "12px 14px", background: "#0d0d0d", borderRadius: 8, border: "1px solid #1a1a1a" }}>
+                  <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>DWZ withdrawal</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#22c55e", fontFamily: "monospace" }}>€{Math.round(dwz.realAnnualWithdrawal).toLocaleString()}/yr</div>
+                  <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>real € (today's purchasing power)</div>
+                </div>
+                <div style={{ padding: "12px 14px", background: dwz.gap > 1000 ? "#160b22" : dwz.gap < -1000 ? "#3a1e1e" : "#0d0d0d", borderRadius: 8, border: `1px solid ${dwz.gap > 1000 ? "#8b5cf6" : dwz.gap < -1000 ? "#dc2626" : "#1a1a1a"}` }}>
+                  <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Vs current GK base</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: dwz.gap > 1000 ? "#a78bfa" : dwz.gap < -1000 ? "#f87171" : "#888", fontFamily: "monospace" }}>
+                    {dwz.gap >= 0 ? "+" : ""}€{Math.round(dwz.gap).toLocaleString()}/yr
+                  </div>
+                  <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>
+                    {dwz.gap > 1000 ? "Under-spending — DWZ allows more" : dwz.gap < -1000 ? "Over-spending vs DWZ" : "On track"}
+                  </div>
+                </div>
+              </div>
+              <div style={{ padding: "10px 12px", background: "#1a1a1a", borderRadius: 6, fontSize: 11, color: "#aaa", lineHeight: 1.6 }}>
+                The GK frame protects you from sequence risk; DWZ shows the upper bound of sustainable spending if you target a finite life.
+                A large positive gap usually means under-spending in your highest-utility decade.
+                Adjust life expectancy / terminal legacy in <strong style={{ color: "#ccc" }}>Settings</strong>.
+              </div>
+            </Card>
+
+            {/* TAX-AWARE WITHDRAWAL OPTIMISER */}
+            {taxOptimisation && (
+              <Card style={{ marginBottom: 16 }}>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Tax-Aware Withdrawal Order</div>
+                  <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>
+                    Optimal bucket-draw order to minimise CGT on this year's €{Math.round(taxOptimisation.targetGross).toLocaleString()} gross sale.
+                    Cash &amp; XEON have near-zero gains; VWCE / Fixed realise at {(gainsFraction * 100).toFixed(0)}% gain fraction.
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  {taxOptimisation.draws.map((d, i) => (
+                    <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #1a1a1a" }}>
+                      <div style={{ width: 24, height: 24, borderRadius: 12, background: d.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{i + 1}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#eee" }}>{d.name}</div>
+                        <div style={{ fontSize: 10, color: "#555" }}>gain {Math.round(d.gain * 100)}% · tax €{Math.round(d.tax).toLocaleString()}</div>
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", fontFamily: "monospace" }}>
+                        €{Math.round(d.take).toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                  {taxOptimisation.shortfall > 0 && (
+                    <div style={{ padding: "8px 10px", background: "#3a1e1e", borderRadius: 6, marginTop: 8, fontSize: 11, color: "#fca5a5" }}>
+                      Short by €{Math.round(taxOptimisation.shortfall).toLocaleString()} — buckets exhausted.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10 }}>
+                  <div style={{ padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, border: "1px solid #1a1a1a" }}>
+                    <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Optimal tax</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#22c55e", fontFamily: "monospace" }}>€{Math.round(taxOptimisation.totalTax).toLocaleString()}</div>
+                  </div>
+                  <div style={{ padding: "10px 12px", background: "#0d0d0d", borderRadius: 6, border: "1px solid #1a1a1a" }}>
+                    <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Naive tax (proportional)</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "#888", fontFamily: "monospace" }}>€{Math.round(taxOptimisation.naiveTax).toLocaleString()}</div>
+                  </div>
+                  <div style={{ padding: "10px 12px", background: taxOptimisation.savings > 0 ? "#052e16" : "#0d0d0d", borderRadius: 6, border: `1px solid ${taxOptimisation.savings > 0 ? "#059669" : "#1a1a1a"}` }}>
+                    <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>Saved</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: taxOptimisation.savings > 0 ? "#22c55e" : "#888", fontFamily: "monospace" }}>€{Math.round(taxOptimisation.savings).toLocaleString()}</div>
+                  </div>
+                </div>
+              </Card>
+            )}
 
             {/* WITHDRAWAL HISTORY LOG */}
             <Card>
@@ -2052,6 +2601,15 @@ function Dashboard() {
       </div>
     </div>
   );
+}
+
+// Expose pure math for tests.html to assert against (no impact on the live app).
+if (typeof window !== 'undefined') {
+  window.__FIRE_TESTS__ = {
+    calcGKNextStep, runGKSimulation, runMonteCarlo,
+    sampleReturnPath, sampleInflationPath, gaussianSample,
+    GK_CONFIG, PHASES,
+  };
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
