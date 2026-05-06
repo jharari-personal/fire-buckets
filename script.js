@@ -120,7 +120,7 @@ function SettingsSheet({ open, onClose, state, setState }) {
                 placeholder="auto-generated on first save"
                 style={{ width: "100%", padding: "11px 14px", background: "var(--surface-2)", border: "1px solid var(--hairline)", borderRadius: 12, color: "var(--fg)", fontSize: 13, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box" }}
               />
-              <Button tone="tertiary" full onClick={() => setDraftGistId(DEFAULT_GIST_ID)} style={{ marginTop: 8 }}>Use default Gist</Button>
+              <Button tone="ghost" full onClick={() => setDraftGistId(DEFAULT_GIST_ID)} style={{ marginTop: 8 }}>Use default Gist</Button>
             </div>
             <Row gap={10}>
               <Button tone="primary" full onClick={cloudSave} disabled={syncing}>{syncing ? "Saving…" : "Save to cloud"}</Button>
