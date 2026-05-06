@@ -174,8 +174,8 @@ function TodayView({ state, setState }) {
   })();
 
   const milestones = [
-    { id: "lean",         label: "Lean FIRE",        wr: GK_CONFIG.IWR, color: "var(--accent)",  sub: "Essentials only, 4% IWR" },
-    { id: "aggressive",   label: "Aggressive FIRE",  wr: 0.045,         color: "var(--b-fixed)", sub: "Full spend, 4.5% IWR" },
+    { id: "lean",         label: "Lean FIRE",        wr: 0.045,         color: "var(--accent)",  sub: "Essentials only, 4.5% IWR" },
+    { id: "aggressive",   label: "Aggressive FIRE",  wr: GK_CONFIG.IWR, color: "var(--b-fixed)", sub: "Full spend, 4% IWR" },
     { id: "recommended",  label: "Recommended",      wr: 0.035, color: "var(--good)",       sub: "Comfortable margin" },
     { id: "bulletproof",  label: "Bulletproof",      wr: 0.030, color: "var(--b-fortress)", sub: "Sequence-risk proof" },
   ].map(m => {
