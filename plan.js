@@ -241,21 +241,21 @@ function PlanView({ state, setState }) {
       <Card>
         <SectionHeader eyebrow="Assumptions" title="Returns & inflation" />
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 16 }}>
-          <PrecisionSlider
+          <NumberField
             label="Expected nominal return"
             value={state.gkNominalReturn || 7.0}
             onChange={(v) => updateState("gkNominalReturn", v)}
             min={2} max={12} step={0.1} suffix="%"
             hint="Long-run annualised. VWCE ≈ 7–8% historically."
           />
-          <PrecisionSlider
+          <NumberField
             label="Expected inflation"
             value={state.gkInflation || 2.0}
             onChange={(v) => updateState("gkInflation", v)}
             min={0} max={8} step={0.1} suffix="%"
             hint="ECB target 2%. Used to inflate withdrawals."
           />
-          <PrecisionSlider
+          <NumberField
             label="Capital-gains tax"
             value={state.bgCgtRatePct || 0}
             onChange={(v) => updateState("bgCgtRatePct", v)}
