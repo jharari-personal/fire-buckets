@@ -128,8 +128,9 @@ function TodayView({ state, setState }) {
   const progress = fireTarget > 0 ? Math.min(1, portfolio / fireTarget) : 0;
   const fireGap = Math.max(0, fireTarget - portfolio);
   // Correct FV-with-contributions formula: n = ln((F·r + c)/(P·r + c)) / ln(1+r)
-  // The prior formula ln(1 + (F−P)·r/c)/ln(1+r) only holds when P=0.
-  const _rMonthly = realReturn / 100 / 12;
+  // Use geometric 12th-root conversion so (1+r)^12 == (1+annualRate) exactly.
+  // Naive annual/12 over-states compounding by ~20 bps/yr at 7% real return.
+  const _rMonthly = Math.pow(1 + realReturn / 100, 1 / 12) - 1;
   const monthsToFire = cf.surplusMonthly > 0 && fireGap > 0
     ? (_rMonthly === 0
         ? Math.ceil(fireGap / cf.surplusMonthly)
@@ -151,7 +152,8 @@ function TodayView({ state, setState }) {
   const rec = monthlyRecommendation(state);
 
   // FIRE milestones — multiple withdrawal-rate scenarios
-  const realReturnMonthly = (realReturn / 100) / 12;
+  // Geometric 12th-root gives the exact effective monthly rate: (1+r_annual)^(1/12)−1.
+  const realReturnMonthly = Math.pow(1 + realReturn / 100, 1 / 12) - 1;
   const monthsToTarget = (target) => {
     if (portfolio >= target) return 0;
     if (cf.surplusMonthly <= 0 && realReturnMonthly <= 0) return Infinity;
@@ -161,9 +163,12 @@ function TodayView({ state, setState }) {
     }
     const r = realReturnMonthly;
     const c = cf.surplusMonthly;
-    // Correct closed-form: n = ln((F·r + c)/(P·r + c)) / ln(1+r)
     if (r === 0) return Math.ceil((target - portfolio) / c);
-    const n = Math.log((target * r + c) / (portfolio * r + c)) / Math.log(1 + r);
+    // Guard negative denominator/numerator: portfolio decay > contributions → unreachable.
+    const numerator   = target    * r + c;
+    const denominator = portfolio * r + c;
+    if (denominator <= 0 || numerator <= 0) return Infinity;
+    const n = Math.log(numerator / denominator) / Math.log(1 + r);
     return Number.isFinite(n) && n > 0 && n <= 600 ? Math.ceil(n) : Infinity;
   };
   const monthsLayoffOnly = (() => {
@@ -174,7 +179,7 @@ function TodayView({ state, setState }) {
   })();
 
   const milestones = [
-    { id: "lean",         label: "Lean FIRE",        wr: 0.045,         color: "var(--accent)",  sub: "Essentials only, 4.5% IWR" },
+    { id: "lean",         label: "Lean FIRE",        wr: 0.045,         color: "var(--accent)",  sub: "Essentials only, 4.5% IWR", caution: "No discretionary buffer — a GK 10% cut would drop below essential spending." },
     { id: "aggressive",   label: "Aggressive FIRE",  wr: GK_CONFIG.IWR, color: "var(--b-fixed)", sub: "Full spend, 4% IWR" },
     { id: "recommended",  label: "Recommended",      wr: 0.035, color: "var(--good)",       sub: "Comfortable margin" },
     { id: "bulletproof",  label: "Bulletproof",      wr: 0.030, color: "var(--b-fortress)", sub: "Sequence-risk proof" },
@@ -311,6 +316,11 @@ function TodayView({ state, setState }) {
                     {(pct * 100).toFixed(0)}%
                   </span>
                 </Row>
+                {m.caution && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--warn)", lineHeight: 1.5 }}>
+                    ⚠ {m.caution}
+                  </div>
+                )}
               </div>
             );
           })}

@@ -1,13 +1,19 @@
 // IMPORTANT: bump SW_VERSION whenever you bump APP_VERSION in script.js.
 // The two strings must stay in sync — there is no shared constant because
 // sw.js runs in a separate JS context from script.js (no importScripts here).
-const SW_VERSION = "20260507.0";
+const SW_VERSION = "20260508.0";
 const CACHE_NAME = `fcc-cache-${SW_VERSION}`;
 
 // Use absolute paths tied specifically to your GH Pages repository
 const ASSETS = [
   '/fire-buckets/',
   '/fire-buckets/index.html',
+  '/fire-buckets/engine.js',
+  '/fire-buckets/ui.js',
+  '/fire-buckets/today.js',
+  '/fire-buckets/plan.js',
+  '/fire-buckets/stress.js',
+  '/fire-buckets/history.js',
   '/fire-buckets/script.js',
   '/fire-buckets/manifest.json',
   '/fire-buckets/icon-192.png',
