@@ -6,16 +6,16 @@ const DEFAULT_GIST_ID = "2b713c829a9a20c576dfa7612035e2ad";
 
 const DEFAULT_STATE = {
   // Buckets
-  bucketVWCE: 240000,
-  bucketXEON: 28000,
-  bucketFixedIncome: 23000,
-  bucketCash: 12000,
+  bucketVWCE: 10000,
+  bucketXEON: 10000,
+  bucketFixedIncome: 10000,
+  bucketCash: 10000,
 
   // Personal — monthly figures
-  monthlyEssentialsEUR: 2042,
-  monthlyFunEUR: 708,
-  monthlySalaryEUR: 8750,
-  monthlySalaryPartnerEUR: 0,
+  monthlyEssentialsEUR: 2000,
+  monthlyFunEUR: 200,
+  monthlySalaryEUR: 2000,
+  monthlySalaryPartnerEUR: 500,
 
   // Phase
   currentPhase: "employed",
@@ -29,8 +29,8 @@ const DEFAULT_STATE = {
   gkHistory: [],
 
   // Personal context (used by trigger evaluation)
-  userBirthYear: null,
-  daughterBirthYear: null,
+  userBirthYear: 1993,
+  daughterBirthYear: 2022,
   ecbDepositRate: 2.0,
   healthInsuranceMonthlyEUR: 19,
   sorrSeverityPct: 15,
