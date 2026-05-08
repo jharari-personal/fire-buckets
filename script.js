@@ -28,6 +28,13 @@ const DEFAULT_STATE = {
   // History
   gkHistory: [],
 
+  // Personal context (used by trigger evaluation)
+  userBirthYear: null,
+  daughterBirthYear: null,
+  ecbDepositRate: 2.0,
+  healthInsuranceMonthlyEUR: 19,
+  sorrSeverityPct: 15,
+
   // Settings
   cloudGistId: "",
   cloudToken: "",
@@ -131,6 +138,54 @@ function SettingsSheet({ open, onClose, state, setState }) {
                 {syncStatus.msg}
               </div>
             )}
+          </Stack>
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)", marginBottom: 4 }}>Personal context</div>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5, marginBottom: 14 }}>
+            Used to personalise trigger alerts. None of this leaves your device.
+          </div>
+          <Stack gap={12}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <NumberField
+                label="Your birth year"
+                value={state.userBirthYear || 0}
+                onChange={v => updateState("userBirthYear", v || null)}
+                min={1940} max={2005} step={1}
+                format={v => v ? String(v) : "—"}
+              />
+              <NumberField
+                label="Daughter's birth year"
+                value={state.daughterBirthYear || 0}
+                onChange={v => updateState("daughterBirthYear", v || null)}
+                min={2000} max={2030} step={1}
+                format={v => v ? String(v) : "—"}
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <NumberField
+                label="ECB rate (%)"
+                value={state.ecbDepositRate ?? 2.0}
+                onChange={v => updateState("ecbDepositRate", v)}
+                min={0} max={10} step={0.25}
+                format={v => `${v.toFixed(2)}%`}
+              />
+              <NumberField
+                label="Health ins. (€/mo)"
+                value={state.healthInsuranceMonthlyEUR ?? 19}
+                onChange={v => updateState("healthInsuranceMonthlyEUR", v)}
+                min={0} max={200} step={1}
+                prefix="€" format={v => String(Math.round(v))}
+              />
+              <NumberField
+                label="SORR threshold (%)"
+                value={state.sorrSeverityPct ?? 15}
+                onChange={v => updateState("sorrSeverityPct", v)}
+                min={5} max={40} step={5}
+                format={v => `−${v}%`}
+              />
+            </div>
           </Stack>
         </div>
 
