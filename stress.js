@@ -120,6 +120,8 @@ function StressView({ state, setState }) {
   const [mcEquitySigma, setMcEquitySigma] = useState(15.0);
   const [mcInflationSigma, setMcInflationSigma] = useState(1.5);
   const [mcRho, setMcRho] = useState(0.0);
+  const [mcRhoEqInf, setMcRhoEqInf] = useState(-0.3);
+  const [mcRhoBdInf, setMcRhoBdInf] = useState(-0.6);
   const [mcPaths, setMcPaths] = useState(1000);
   const [mcResult, setMcResult] = useState(null);
   const [mcRunning, setMcRunning] = useState(false);
@@ -146,6 +148,8 @@ function StressView({ state, setState }) {
         inflationTarget: (state.gkInflation || 2) / 100,
         inflationSigma: mcInflationSigma / 100,
         rhoEquityBond: mcRho,
+        rhoEquityInflation: mcRhoEqInf,
+        rhoBondInflation: mcRhoBdInf,
         years: 40, paths: mcPaths,
       });
       setMcResult(result);
@@ -190,11 +194,13 @@ function StressView({ state, setState }) {
           }
         />
 
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
           <PrecisionSlider label="Equity volatility (σ)" value={mcEquitySigma} onChange={setMcEquitySigma} min={8} max={30} step={0.5} suffix="%" />
           <PrecisionSlider label="Inflation volatility (σ)" value={mcInflationSigma} onChange={setMcInflationSigma} min={0.5} max={5} step={0.1} suffix="%" />
-          <PrecisionSlider label="Stock-bond correlation (ρ)" value={mcRho} onChange={setMcRho} min={-0.6} max={0.8} step={0.05} format={v => v.toFixed(2)} hint="0 = independent; +0.4 = 2022-style regime" />
           <PrecisionSlider label="Number of paths" value={mcPaths} onChange={setMcPaths} min={200} max={3000} step={200} format={v => v.toLocaleString()} />
+          <PrecisionSlider label="Stock-bond correlation (ρ)" value={mcRho} onChange={setMcRho} min={-0.6} max={0.8} step={0.05} format={v => v.toFixed(2)} hint="0 = independent; +0.4 = 2022-style co-crash" />
+          <PrecisionSlider label="Equity-inflation correlation (ρ)" value={mcRhoEqInf} onChange={setMcRhoEqInf} min={-0.7} max={0.1} step={0.05} format={v => v.toFixed(2)} hint="Negative: high inflation → lower equity returns" />
+          <PrecisionSlider label="Bond-inflation correlation (ρ)" value={mcRhoBdInf} onChange={setMcRhoBdInf} min={-0.9} max={0.1} step={0.05} format={v => v.toFixed(2)} hint="Negative: rising inflation → rising rates → bond losses" />
         </div>
 
         {mcResult ? (

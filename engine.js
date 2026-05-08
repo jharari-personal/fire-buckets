@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260507.0";
+const APP_VERSION = "20260508.0";
 
 const GK_CONFIG = {
   IWR: 0.04,
@@ -120,12 +120,25 @@ function calcGKNextStep({
   let trigger = null;
   let finalWithdrawal = proposedWithdrawal;
 
-  // Capital Preservation Rule fires only in the first (horizonYears − 15) years.
-  const cprActive = currentYear <= horizonYears - 15;
-  if (cprActive && currentWR > GK_CONFIG.LOWER_GUARDRAIL) {
+  // Dynamic guardrails: GK's 20% deviation bands scale with the chosen IWR.
+  // Static 3.2 / 4.8% only hold when IWR = 4%; a 3% "Bulletproof" start would
+  // immediately trigger Prosperity with the old static values.
+  const dynamicUpperGuardrail = initialWR * 0.80;  // IWR − 20%
+  const dynamicLowerGuardrail = initialWR * 1.20;  // IWR + 20%
+
+  // Capital Preservation Rule fires only in the first (horizonYears − 15) years
+  // per Guyton & Klinger (2006), with a crisis override: keep CPR active whenever
+  // the WR is acutely elevated (> 1.5× IWR), regardless of time horizon.
+  // Without the override a late-stage crash at 8%+ WR would not trigger any cut
+  // in the last 15 years of a 40–50 year FIRE simulation.
+  const timeConditionMet  = currentYear > horizonYears - 15;
+  const crisisConditionMet = currentWR > initialWR * 1.5;
+  const cprActive = !timeConditionMet || crisisConditionMet;
+
+  if (cprActive && currentWR > dynamicLowerGuardrail) {
     finalWithdrawal = proposedWithdrawal * (1 - GK_CONFIG.ADJUSTMENT);
     trigger = "CAPITAL_PRESERVATION";
-  } else if (currentWR < GK_CONFIG.UPPER_GUARDRAIL) {
+  } else if (currentWR < dynamicUpperGuardrail) {
     finalWithdrawal = proposedWithdrawal * (1 + GK_CONFIG.ADJUSTMENT);
     trigger = "PROSPERITY";
   }
@@ -229,11 +242,66 @@ function sampleInflationPath({ years, target, sigma }) {
   return path;
 }
 
+// sampleCorrelatedPaths — generates a return path AND an inflation path whose
+// shocks are correlated via a 3×3 Cholesky decomposition (equity, bonds, inflation).
+//
+// Correlations (all expressed as equity/bond return vs. inflation shock):
+//   rhoEquityInflation: typically −0.3  (high inflation → lower equity real returns)
+//   rhoBondInflation:   typically −0.6  (high inflation → lower bond prices via rate hike)
+//
+// A 2×2-only Cholesky (the old approach) treated inflation as independent, generating
+// impossible regimes (12% inflation paired with +30% equities) that masked stagflation
+// risk and inflated Monte Carlo success rates.
+function sampleCorrelatedPaths({
+  years, equityShare, equityMu, equitySigma, bondMu, bondSigma,
+  rhoEquityBond = 0.0,
+  inflationTarget, inflationSigma,
+  rhoEquityInflation = -0.3, rhoBondInflation = -0.6,
+}) {
+  const equityMuArith = equityMu + (equitySigma * equitySigma) / 2;
+  const bondMuArith   = bondMu   + (bondSigma   * bondSigma)   / 2;
+
+  // 3×3 lower-triangular Cholesky: z1=equity, z2=bonds, z3=inflation
+  const l11 = 1.0;
+  const l21 = rhoEquityBond;
+  const l22 = Math.sqrt(Math.max(0, 1 - l21 * l21));
+  const l31 = rhoEquityInflation;
+  const l32 = l22 > 1e-10 ? (rhoBondInflation - l31 * l21) / l22 : 0;
+  const l33 = Math.sqrt(Math.max(0, 1 - l31 * l31 - l32 * l32));
+
+  const returnPath = [];
+  const inflationPath = [];
+  let lastInflation = inflationTarget;
+
+  for (let i = 0; i < years; i++) {
+    const u1 = gaussianSample();
+    const u2 = gaussianSample();
+    const u3 = gaussianSample();
+
+    const eqShock  = l11 * u1;
+    const bdShock  = l21 * u1 + l22 * u2;
+    const infShock = l31 * u1 + l32 * u2 + l33 * u3;
+
+    const eq = equityMuArith + equitySigma * eqShock;
+    const bd = bondMuArith   + bondSigma   * bdShock;
+    returnPath.push(equityShare * eq + (1 - equityShare) * bd);
+
+    // AR(1) inflation with correlated shock
+    const drift = (1 - 0.85) * (inflationTarget - lastInflation);
+    lastInflation = Math.max(-0.02, lastInflation + drift + inflationSigma * infShock);
+    inflationPath.push(lastInflation);
+  }
+
+  return { returnPath, inflationPath };
+}
+
 function runMonteCarlo({
   startPortfolio, startWithdrawal,
   equityShare, equityMu, equitySigma, bondMu, bondSigma,
   inflationTarget, inflationSigma,
   rhoEquityBond = 0.0,
+  rhoEquityInflation = -0.3,
+  rhoBondInflation   = -0.6,
   years = 40, paths = 1000,
 }) {
   const portfolioByYear = Array.from({ length: years }, () => []);
@@ -243,10 +311,11 @@ function runMonteCarlo({
   const terminalWealth = [];
 
   for (let p = 0; p < paths; p++) {
-    const returnPath = sampleReturnPath({
-      years, equityShare, equityMu, equitySigma, bondMu, bondSigma, rhoEquityBond,
+    const { returnPath, inflationPath } = sampleCorrelatedPaths({
+      years, equityShare, equityMu, equitySigma, bondMu, bondSigma,
+      rhoEquityBond, inflationTarget, inflationSigma,
+      rhoEquityInflation, rhoBondInflation,
     });
-    const inflationPath = sampleInflationPath({ years, target: inflationTarget, sigma: inflationSigma });
     const rows = runGKSimulation({ startPortfolio, startWithdrawal, returnPath, inflationPath, years });
 
     let cutEarly = false;
@@ -466,13 +535,13 @@ Object.assign(window, {
   APP_VERSION, GK_CONFIG, PHASES, BUCKET_META, TRIGGERS,
   fmtEur, fmtEurK, fmtPct, getGKZone,
   calcGKNextStep, runGKSimulation, runMonteCarlo,
-  sampleReturnPath, sampleInflationPath, gaussianSample,
+  sampleCorrelatedPaths, sampleReturnPath, sampleInflationPath, gaussianSample,
   deriveCashflow, nextRebalanceBucket, monthlyRecommendation, effectiveFloor,
   loadState, saveState, loadFromGist, saveToGist, GIST_FILENAME,
 });
 
 window.__FIRE_TESTS__ = {
   calcGKNextStep, runGKSimulation, runMonteCarlo,
-  sampleReturnPath, sampleInflationPath, gaussianSample,
+  sampleCorrelatedPaths, sampleReturnPath, sampleInflationPath, gaussianSample,
   GK_CONFIG, PHASES,
 };
