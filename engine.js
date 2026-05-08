@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260508.0";
+const APP_VERSION = "20260508.1";
 
 const GK_CONFIG = {
   IWR: 0.04,
@@ -77,17 +77,163 @@ const BUCKET_META = {
   cash:       { label: "Cash",      sub: "EUR @ IBKR",       inst: "EUR cash", color: "var(--b-cash)",     raw: "#8c8c87", short: "DCA buffer or opportunity fund." },
 };
 
+// Triggers render in urgency order (immediate → week → month → quarter).
+// Each trigger has a condition(state, derived) predicate. action may be a
+// string or function(state, derived) → string for computed text.
+const URGENCY_ORDER = { immediate: 0, week: 1, month: 2, quarter: 3 };
+
 const TRIGGERS = [
-  { event: "Layoff confirmed",                    action: "Cancel DCA → route cash to XEON. Switch to Sabbatical. Do NOT sell VWCE.", urgency: "immediate", category: "employment" },
-  { event: "Portfolio hits €500k",                action: "Split new DCA: 60% VWCE / 40% SPYI or ISAC for provider diversification.", urgency: "month", category: "milestone" },
-  { event: "Portfolio hits €625k",                action: "FIRE-Ready. Fortress floor → €44k (GK B1). TermShield → €110k (GK B2).",   urgency: "month", category: "milestone" },
-  { event: "Art. 13 repealed (10% CGT)",          action: "April 2026 reset is safe. Activate Beckham Law research → decide within 60 days.", urgency: "quarter", category: "tax" },
-  { event: "€STR drops below 1.5%",               action: "Review XEON yield. Consider short-dated EUR govt bond ETF alternative.",   urgency: "quarter", category: "market" },
-  { event: "March 2029 — 29GA dissolution",       action: "Sell 29GA on BVME.ETF via directed limit order. Do NOT wait for December.", urgency: "immediate", category: "calendar" },
-  { event: "Market drawdown > 25%",               action: "Deploy strategic cash into growth. Skip GK inflation raise next year.",     urgency: "week", category: "market" },
-  { event: "Daughter starts private school",      action: "Add €10–13k/yr to expenses. Recalculate GK IWR. If > 4.8%, apply cut.",     urgency: "month", category: "life" },
-  { event: "Wife starts earning income",          action: "Reduce fortress floor by ~50% of her annual. Recalculate GK IWR.",           urgency: "quarter", category: "life" },
-  { event: "New employment in Spain",             action: "File Beckham Law (Form 149) within 6 months of entering Spanish SS.",       urgency: "immediate", category: "relocation" },
+  // ── Calendar / legal ─────────────────────────────────────────────────────
+  {
+    key: "ga29-dissolution",
+    event: "March 2029 — 29GA dissolution deadline",
+    action: "Sell 29GA on BVME.ETF via directed limit order before December 2029. Do NOT wait for the year-end deadline.",
+    urgency: "immediate",
+    category: "calendar",
+    condition: () => new Date() < new Date("2029-10-01"),
+  },
+  {
+    key: "art13-repeal-risk",
+    event: "Art. 13 ZDDFL — CGT exemption at risk",
+    action: "The 0% CGT on UCITS ETFs (VWCE, XEON) could be repealed. If a 10% rate passes, recalculate the entire withdrawal order and re-run the GK simulation with after-tax returns. Decision window: 60 days after any repeal.",
+    urgency: "quarter",
+    category: "tax",
+    condition: () => true,
+  },
+
+  // ── Portfolio milestones ─────────────────────────────────────────────────
+  {
+    key: "milestone-500k",
+    event: "Portfolio approaching €500k",
+    action: "At €500k, split new DCA: 60% VWCE / 40% SPYI or ISAC for provider diversification. Reduces single-broker concentration risk.",
+    urgency: "month",
+    category: "milestone",
+    condition: (_s, d) => d.portfolio >= 450_000 && d.portfolio < 525_000,
+  },
+  {
+    key: "milestone-625k",
+    event: "Portfolio approaching €625k — FIRE-ready zone",
+    action: "Raise Fortress floor → €44k and TermShield → €110k (GK B1/B2 levels). Re-run full GK simulation with updated bucket balances before pulling the trigger.",
+    urgency: "month",
+    category: "milestone",
+    condition: (_s, d) => d.portfolio >= 575_000 && d.portfolio < 650_000,
+  },
+
+  // ── Employment ───────────────────────────────────────────────────────────
+  {
+    key: "layoff-protocol",
+    event: "Layoff confirmed",
+    action: "Cancel DCA and route all surplus cash to XEON. Switch phase to Sabbatical. Do NOT sell VWCE under any circumstances. Reassess runway at 30 days.",
+    urgency: "immediate",
+    category: "employment",
+    condition: (s) => s.currentPhase === "employed",
+  },
+
+  // ── GK guardrail warnings ────────────────────────────────────────────────
+  {
+    key: "gk-cut-active",
+    event: "GK cut required — above Capital Preservation guardrail",
+    action: (_s, d) => `WR is ${fmtPct(d.currentWR * 100)} — above the ${fmtPct(GK_CONFIG.IWR * 1.2 * 100)} guardrail. Reduce withdrawals by 10% at next year-end.`,
+    urgency: "immediate",
+    category: "gk",
+    condition: (_s, d) => d.inDrawdown && d.currentWR >= GK_CONFIG.IWR * 1.2,
+  },
+  {
+    key: "gk-inflation-freeze",
+    event: "GK inflation raise frozen — negative return year",
+    action: (_s, d) => `Last recorded return was ${d.lastReturn.toFixed(1)}%. Per Guyton-Klinger: do NOT raise withdrawals for inflation this year. Keep the same nominal withdrawal amount.`,
+    urgency: "immediate",
+    category: "gk",
+    condition: (_s, d) => d.inDrawdown && d.lastReturn !== null && d.lastReturn < 0,
+  },
+  {
+    key: "gk-cut-approaching",
+    event: "GK Capital Preservation guardrail approaching",
+    action: (_s, d) => `Current WR is ${fmtPct(d.currentWR * 100)} — approaching the ${fmtPct(GK_CONFIG.IWR * 1.2 * 100)} cut guardrail. A further portfolio decline will trigger a mandatory 10% withdrawal reduction at next year-end.`,
+    urgency: "week",
+    category: "gk",
+    condition: (_s, d) => d.inDrawdown && d.currentWR > GK_CONFIG.IWR * 1.05 && d.currentWR < GK_CONFIG.IWR * 1.2,
+  },
+  {
+    key: "gk-prosperity",
+    event: "GK Prosperity raise available",
+    action: (_s, d) => `WR is ${fmtPct(d.currentWR * 100)} — below the ${fmtPct(GK_CONFIG.IWR * 0.8 * 100)} prosperity threshold. You may raise annual withdrawals by 10% at next year-end.`,
+    urgency: "month",
+    category: "gk",
+    condition: (_s, d) => d.inDrawdown && d.currentWR > 0 && d.currentWR < GK_CONFIG.IWR * 0.8,
+  },
+
+  // ── Sequence of Returns Risk ─────────────────────────────────────────────
+  {
+    key: "sorr-warning",
+    event: "Sequence of Returns Risk — early drawdown loss",
+    action: (_s, d) => `Portfolio down ${Math.abs(d.lastReturn).toFixed(1)}% within the first ${d.yearsInDrawdown} year(s) of drawdown. The first decade is the highest-risk window — a loss now permanently reduces long-term portfolio longevity. Draw exclusively from Cash and XEON. Do NOT sell VWCE until markets recover.`,
+    urgency: "immediate",
+    category: "market",
+    condition: (s, d) => d.inDrawdown && d.yearsInDrawdown <= 10 && d.lastReturn !== null && d.lastReturn < -(s.sorrSeverityPct ?? 15),
+  },
+  {
+    key: "market-drawdown",
+    event: "Market drawdown — opportunistic rebalance",
+    action: (_s, d) => `Last recorded return was ${d.lastReturn.toFixed(1)}%. Consider deploying strategic cash reserves into VWCE. Apply GK inflation freeze to withdrawals next year.`,
+    urgency: "week",
+    category: "market",
+    condition: (s, d) => !d.inDrawdown && d.lastReturn !== null && d.lastReturn < -(s.sorrSeverityPct ?? 15),
+  },
+
+  // ── Bucket health ─────────────────────────────────────────────────────────
+  {
+    key: "cash-low",
+    event: "Cash bucket critically low",
+    action: (_s, d) => `Cash holds only ${d.cashMonths.toFixed(1)} months of expenses. Refill from XEON immediately — never draw on VWCE or Bonds to cover short-term liquidity needs.`,
+    urgency: "immediate",
+    category: "buckets",
+    condition: (_s, d) => d.portfolio > 0 && d.cashMonths < 3,
+  },
+  {
+    key: "xeon-low",
+    event: "XEON (Safety) bucket below refill threshold",
+    action: (_s, d) => `XEON holds ${d.xeonMonths.toFixed(1)} months of expenses — below the 6-month refill floor. Sell from Bonds (TermShield) to replenish. Do NOT touch VWCE.`,
+    urgency: "week",
+    category: "buckets",
+    condition: (_s, d) => d.portfolio > 0 && d.xeonMonths < 6,
+  },
+
+  // ── Macro ────────────────────────────────────────────────────────────────
+  {
+    key: "ecb-rate-low",
+    event: "XEON yield below inflation — real value erosion",
+    action: (s) => `ECB deposit rate (${fmtPct(s.ecbDepositRate)}) is below your inflation assumption (${fmtPct(s.gkInflation)}%). XEON is losing real purchasing power. Consider replacing part of the Safety bucket with a short-dated EUR government bond ETF.`,
+    urgency: "quarter",
+    category: "market",
+    condition: (s) => s.ecbDepositRate != null && s.gkInflation != null && s.ecbDepositRate < s.gkInflation,
+  },
+
+  // ── Life events ───────────────────────────────────────────────────────────
+  {
+    key: "daughter-school",
+    event: "Daughter approaching private school age",
+    action: (_s, d) => `Daughter is ${d.daughterAge} — private school costs (~€10–13k/yr) will begin soon. Add to annual expenses and recalculate GK IWR. If the revised WR exceeds ${fmtPct(GK_CONFIG.IWR * 1.2 * 100)}, a 10% withdrawal cut is already required.`,
+    urgency: "month",
+    category: "life",
+    condition: (s, d) => s.daughterBirthYear != null && d.daughterAge !== null && d.daughterAge >= 4 && d.daughterAge <= 8,
+  },
+  {
+    key: "pension-approaching",
+    event: "State pension in ~5 years",
+    action: (_s, d) => `You are ${d.age} — Bulgarian state pension eligibility is 65 (phased target by 2029 for men). In ~${65 - d.age} year(s), state benefits will reduce required portfolio draws. Recalculate your GK IWR now to model the lower post-65 withdrawal.`,
+    urgency: "month",
+    category: "life",
+    condition: (_s, d) => d.age !== null && d.age >= 60 && d.age < 65,
+  },
+  {
+    key: "health-insurance",
+    event: "Health insurance — self-insured early retiree",
+    action: (s) => `As an early retiree not covered by employment, mandatory Bulgarian health insurance (~${fmtEur(s.healthInsuranceMonthlyEUR ?? 19)}/month) must be in your essentials budget. Verify this is included in your current ${fmtEur(s.monthlyEssentialsEUR)}/month essential figure.`,
+    urgency: "quarter",
+    category: "life",
+    condition: (_s, d) => d.inDrawdown,
+  },
 ];
 
 // ─── GK Calculation Engine ───
@@ -495,6 +641,33 @@ function monthlyRecommendation(state) {
   }
 }
 
+// ─── Trigger evaluation ───
+// Computes all derived values needed by trigger conditions, then returns the
+// filtered, action-resolved, urgency-sorted list of active triggers.
+function evaluateTriggers(state) {
+  const cf = deriveCashflow(state);
+  const portfolio = (state.bucketVWCE || 0) + (state.bucketXEON || 0) + (state.bucketFixedIncome || 0) + (state.bucketCash || 0);
+  const inDrawdown = state.currentPhase === "lean_fire" || state.currentPhase === "full_fire";
+  const sortedHistory = (state.gkHistory || []).slice().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  const lastHistory = sortedHistory[0] ?? null;
+  const lastReturn = lastHistory ? (lastHistory.actualReturn ?? null) : null;
+  const currentWR = lastHistory?.wr
+    ?? (inDrawdown && portfolio > 0 ? cf.annualExpenses / portfolio : 0);
+  const currentYear = new Date().getFullYear();
+  const age = state.userBirthYear ? currentYear - state.userBirthYear : null;
+  const daughterAge = state.daughterBirthYear ? currentYear - state.daughterBirthYear : null;
+  const cashMonths = cf.totalExpenses > 0 ? (state.bucketCash || 0) / cf.totalExpenses : 0;
+  const xeonMonths = cf.totalExpenses > 0 ? (state.bucketXEON || 0) / cf.totalExpenses : 0;
+  const yearsInDrawdown = inDrawdown ? sortedHistory.length : 0;
+
+  const derived = { portfolio, inDrawdown, lastReturn, currentWR, age, daughterAge, cashMonths, xeonMonths, yearsInDrawdown };
+
+  return TRIGGERS
+    .filter(t => { try { return t.condition(state, derived); } catch { return false; } })
+    .map(t => ({ ...t, action: typeof t.action === "function" ? t.action(state, derived) : t.action }))
+    .sort((a, b) => (URGENCY_ORDER[a.urgency] ?? 99) - (URGENCY_ORDER[b.urgency] ?? 99));
+}
+
 // ─── Storage / Sync ───
 const STORAGE_KEY = "harari-dashboard-state";
 async function loadState() { try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; } }
@@ -532,11 +705,12 @@ async function saveToGist(token, gistId, state) {
 }
 
 Object.assign(window, {
-  APP_VERSION, GK_CONFIG, PHASES, BUCKET_META, TRIGGERS,
+  APP_VERSION, GK_CONFIG, PHASES, BUCKET_META, TRIGGERS, URGENCY_ORDER,
   fmtEur, fmtEurK, fmtPct, getGKZone,
   calcGKNextStep, runGKSimulation, runMonteCarlo,
   sampleCorrelatedPaths, sampleReturnPath, sampleInflationPath, gaussianSample,
   deriveCashflow, nextRebalanceBucket, monthlyRecommendation, effectiveFloor,
+  evaluateTriggers,
   loadState, saveState, loadFromGist, saveToGist, GIST_FILENAME,
 });
 

@@ -205,13 +205,7 @@ function TodayView({ state, setState }) {
     return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
   };
 
-  const relevantTriggers = TRIGGERS.filter(t => {
-    if (t.event.includes("€500k")) return portfolio >= 450_000 && portfolio < 525_000;
-    if (t.event.includes("€625k")) return portfolio >= 575_000 && portfolio < 650_000;
-    if (t.event.includes("Layoff")) return state.currentPhase === "employed";
-    if (t.event.includes("Sabbatical") || t.event.includes("29GA")) return true;
-    return false;
-  }).slice(0, 3);
+  const relevantTriggers = evaluateTriggers(state);
 
   return (
     <Stack gap={isMobile ? 16 : 20}>
@@ -498,11 +492,11 @@ function TodayView({ state, setState }) {
             subtitle="Triggers relevant to where you are now."
           />
           <Stack gap={10}>
-            {relevantTriggers.map((t, i) => {
+            {relevantTriggers.map((t) => {
               const tones = { immediate: "bad", week: "warn", month: "accent", quarter: "default" };
               const labels = { immediate: "Act now", week: "This week", month: "This month", quarter: "This quarter" };
               return (
-                <div key={i} style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--hairline)" }}>
+                <div key={t.key} style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--hairline)" }}>
                   <Row justify="space-between" align="flex-start" gap={12} style={{ marginBottom: 6 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>{t.event}</span>
                     <Pill tone={tones[t.urgency]} size="xs">{labels[t.urgency]}</Pill>
