@@ -8,6 +8,12 @@ const CACHE_NAME = `fcc-cache-${SW_VERSION}`;
 const ASSETS = [
   '/fire-buckets/',
   '/fire-buckets/index.html',
+  '/fire-buckets/engine.js',
+  '/fire-buckets/ui.js',
+  '/fire-buckets/today.js',
+  '/fire-buckets/plan.js',
+  '/fire-buckets/stress.js',
+  '/fire-buckets/history.js',
   '/fire-buckets/script.js',
   '/fire-buckets/manifest.json',
   '/fire-buckets/icon-192.png',
