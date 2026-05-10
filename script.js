@@ -265,6 +265,7 @@ function App() {
   const tabs = [
     { id: "today",   label: "Today",   icon: <Icon name="today"   size={isMobile ? 20 : 14} /> },
     { id: "plan",    label: "Plan",    icon: <Icon name="layers"  size={isMobile ? 20 : 14} /> },
+    { id: "freedom", label: "Freedom", icon: <Icon name="target"  size={isMobile ? 20 : 14} /> },
     { id: "stress",  label: "Stress",  icon: <Icon name="chart"   size={isMobile ? 20 : 14} /> },
     { id: "history", label: "History", icon: <Icon name="history" size={isMobile ? 20 : 14} /> },
   ];
@@ -277,7 +278,7 @@ function App() {
     );
   }
 
-  const View = { today: TodayView, plan: PlanView, stress: StressView, history: HistoryView }[tab];
+  const View = { today: TodayView, plan: PlanView, freedom: FreedomView, stress: StressView, history: HistoryView }[tab];
 
   return (
     <div style={{ minHeight: "100vh" }}>

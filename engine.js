@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260508.1";
+const APP_VERSION = "20260510.1";
 
 const GK_CONFIG = {
   IWR: 0.04,
@@ -50,8 +50,26 @@ const PHASES = {
       cash:       { target: 3,  range: [1,5],   floor: null,  floorMonths: 0,  note: "Severance overflow + operating liquidity." },
     },
   },
+  coast_fire: {
+    id: "coast_fire", label: "Coast FIRE", subtitle: "Earning covers expenses — portfolio compounds",
+    buckets: {
+      growth:     { target: 86, range: [84,89], floor: null,  floorMonths: 0,  note: "Max growth — no withdrawals expected." },
+      fortress:   { target: 6,  range: [5,7],   floor: 20000, floorMonths: 12, note: "Emergency buffer — income covers day-to-day." },
+      termShield: { target: 5,  range: [3,6],   floor: 15000, floorMonths: 0,  note: "Stability anchor while compounding." },
+      cash:       { target: 3,  range: [0,4],   floor: null,  floorMonths: 0,  note: "Minimal — income handles cashflow." },
+    },
+  },
+  barista_fire: {
+    id: "barista_fire", label: "Barista FIRE", subtitle: "Part-time income + small portfolio draws",
+    buckets: {
+      growth:     { target: 80, range: [78,83], floor: null,  floorMonths: 0,  note: "Still majority growth — draws are small." },
+      fortress:   { target: 8,  range: [7,10],  floor: 25000, floorMonths: 15, note: "Larger buffer — income less reliable." },
+      termShield: { target: 8,  range: [6,10],  floor: 20000, floorMonths: 0,  note: "Stability for supplemental withdrawals." },
+      cash:       { target: 4,  range: [0,5],   floor: null,  floorMonths: 0,  note: "Covers months income falls short." },
+    },
+  },
   lean_fire: {
-    id: "lean_fire", label: "Lean FIRE", subtitle: "Part-time income + portfolio growth",
+    id: "lean_fire", label: "Lean Independence", subtitle: "Essentials-only from portfolio",
     buckets: {
       growth:     { target: 78, range: [72,82], floor: null,  floorMonths: 0,  note: "Multi-provider above €500k." },
       fortress:   { target: 8,  range: [6,12],  floor: 40000, floorMonths: 24, note: "GK B1 — 2yr safety net. Draw first." },
@@ -704,13 +722,30 @@ async function saveToGist(token, gistId, state) {
   }
 }
 
+function monthsToTarget(portfolio, target, monthlySurplus, realReturnMonthly) {
+  if (portfolio >= target) return 0;
+  if (monthlySurplus <= 0 && realReturnMonthly <= 0) return Infinity;
+  if (monthlySurplus <= 0) {
+    const n = Math.log(target / portfolio) / Math.log(1 + realReturnMonthly);
+    return n > 600 ? Infinity : Math.ceil(n);
+  }
+  const r = realReturnMonthly;
+  const c = monthlySurplus;
+  if (r === 0) return Math.ceil((target - portfolio) / c);
+  const numerator   = target    * r + c;
+  const denominator = portfolio * r + c;
+  if (denominator <= 0 || numerator <= 0) return Infinity;
+  const n = Math.log(numerator / denominator) / Math.log(1 + r);
+  return Number.isFinite(n) && n > 0 && n <= 600 ? Math.ceil(n) : Infinity;
+}
+
 Object.assign(window, {
   APP_VERSION, GK_CONFIG, PHASES, BUCKET_META, TRIGGERS, URGENCY_ORDER,
   fmtEur, fmtEurK, fmtPct, getGKZone,
   calcGKNextStep, runGKSimulation, runMonteCarlo,
   sampleCorrelatedPaths, sampleReturnPath, sampleInflationPath, gaussianSample,
   deriveCashflow, nextRebalanceBucket, monthlyRecommendation, effectiveFloor,
-  evaluateTriggers,
+  evaluateTriggers, monthsToTarget,
   loadState, saveState, loadFromGist, saveToGist, GIST_FILENAME,
 });
 

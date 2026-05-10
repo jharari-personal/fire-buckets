@@ -16,12 +16,13 @@ The app is split across several `<script type="text/babel">` files loaded in ord
 | `ui.js` | Design-system primitives (components, hooks) |
 | `today.js` | **Today** tab — situational awareness |
 | `plan.js` | **Plan** tab — bucket balances, cashflow inputs |
+| `freedom.js` | **Freedom** tab — financial independence scenario modeler |
 | `stress.js` | **Stress** tab — linear projection + Monte Carlo |
 | `history.js` | **History** tab — annual GK log |
 | `script.js` | App shell — `SettingsSheet`, `Header`, `App` root, `ReactDOM.createRoot` |
 | `sw.js` | Service Worker (stale-while-revalidate) |
 
-Load order in `index.html`: `engine.js` → `ui.js` → `today.js` → `plan.js` → `stress.js` → `history.js` → `script.js`.
+Load order in `index.html`: `engine.js` → `ui.js` → `today.js` → `plan.js` → `freedom.js` → `stress.js` → `history.js` → `script.js`.
 
 ## Deployment
 
@@ -43,7 +44,7 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 
 **Constants:**
 - `GK_CONFIG` — Guyton-Klinger parameters: `IWR` 4.0%, `UPPER_GUARDRAIL` 3.2%, `LOWER_GUARDRAIL` 4.8%, `ADJUSTMENT` 10%. No inflation cap — canonical GK 2006 applies the full CPI adjustment (the old 6% cap silently destroyed real purchasing power in 2022).
-- `PHASES` — 4 life phases (`employed`, `laid_off`, `lean_fire`, `full_fire`), each with bucket allocation `target`, `range`, `floor`, and `floorMonths`. The effective floor is `max(staticFloor, floorMonths × monthlyTotal)`.
+- `PHASES` — 6 life phases (`employed`, `coast_fire`, `barista_fire`, `laid_off`, `lean_fire`, `full_fire`), each with bucket allocation `target`, `range`, `floor`, and `floorMonths`. The effective floor is `max(staticFloor, floorMonths × monthlyTotal)`. Phase order in Plan tab: Employed → Coast FIRE → Barista FIRE → Sabbatical → Lean Independence → Full FIRE.
 - `BUCKET_META` — display metadata for the 4 buckets: `growth` (VWCE), `fortress` (XEON), `termShield` (Bonds), `cash` (EUR cash).
 - `TRIGGERS` — 10 event-driven decision rules with urgency levels.
 - `fmtEur(n)` / `fmtEurK(n)` / `fmtPct(n)` — number formatters.
@@ -95,14 +96,26 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 - Runway card: Safety + Cash months.
 - Decision triggers: filtered subset of `TRIGGERS` relevant to current state.
 
-`monthsToTarget(target)` uses the closed-form FV formula `n = ln((F·r + c) / (P·r + c)) / ln(1+r)` with **geometric monthly rate** `r = (1 + realReturn)^(1/12) − 1` (not nominal `r/12`). Guards negative denominators to return `Infinity`.
+`monthsToTarget(portfolio, target, monthlySurplus, realReturnMonthly)` — standalone pure function in `engine.js` (exported to `window`). Uses the closed-form FV formula `n = ln((F·r + c) / (P·r + c)) / ln(1+r)` with **geometric monthly rate** `r = (1 + realReturn)^(1/12) − 1` (not nominal `r/12`). Guards negative denominators to return `Infinity`. Used by both Today and Freedom tabs.
 
 **Plan** (`plan.js`) — strategy inputs.
-- Phase selector (switches `currentPhase`; switching to `laid_off` zeros primary salary).
+- Phase selector (3×2 grid on mobile, 3-column on desktop for 6 phases; switches `currentPhase`; switching to `laid_off` zeros primary salary).
 - Bucket balance editors (`NumberField` for VWCE, XEON, Bonds, Cash).
 - Allocation drift bars (actual % vs. phase targets, with range bands).
 - Monthly income & spending inputs (`monthlySalaryEUR`, `monthlySalaryPartnerEUR`, `monthlyEssentialsEUR`, `monthlyFunEUR`).
 - Assumptions: `gkNominalReturn`, `gkInflation`, `bgCgtRatePct`.
+
+**Freedom** (`freedom.js`) — financial independence scenario modeler. All inputs use local `useState` (not persisted) — it's a sandbox for exploring "what if" scenarios without modifying actual settings. The 5 sections are interconnected: exit portfolio flows from Section 2 into Sections 3–5, and monthly gap from Section 3 flows into Section 4.
+
+- **Section 1: Employment Countdown** — Days since `EMPLOYMENT_START` (Jan 1 2026), EUR earned and invested since start. "N more months" `PrecisionSlider` (0–24) projects additional portfolio using **primary salary surplus only** (excludes partner/side income) with **simple addition** (no compounding): `projectedPortfolio = portfolio + N × max(0, primarySalary − totalExpenses)`.
+
+- **Section 2: Exit Scenario Simulator** — Inputs: exit timing (0–24 months out), severance (0–12 months of salary), bonus toggle + amount, unpaid vacation days. Computes `exitPortfolio = currentPortfolio + (monthsUntilExit × surplusMonthly) + lumpSum`. Shows best/worst case range. **Independence snapshot**: 3 compact cards with left accent borders showing (a) safe monthly income at 4% IWR, (b) essentials coverage % with EUR gap, (c) full lifestyle coverage % with EUR gap.
+
+- **Section 3: Hybrid Income Model** — 4 toggleable income sources (freelance, part-time, partner, passive), each with amount slider and **duration slider** (1–600 months; 600 = "Indefinite"). Expenses adjustable via essentials + fun sliders. Derives: hybrid income, monthly gap, effective WR (color-coded by GK zone), adjusted FIRE target. The `incomeAtMonth(m)` helper computes income at any month post-exit, accounting for expiring income sources.
+
+- **Section 4: Bucket Drawdown Sequencer** — Duration-aware month-by-month simulation using `incomeAtMonth(m)` for varying monthly gaps. Draw cascade: Cash → XEON → Bonds → VWCE. VWCE compounds at `gkNominalReturn` while not being drawn. `DrawdownChart` is a pure SVG stacked area chart using `ResizeObserver` to fill 100% container width. Shows runway cards for each bucket. If no drawdown needed (all income covers expenses), shows portfolio growth projection.
+
+- **Section 5: Sensitivity Matrix** — `SensitivityGrid` is a 7×9 HTML table (annual spend 18k–30k vs annual income 0–24k). Each cell shows withdrawal rate `max(0, spend − income) / exitPortfolio × 100`, color-coded by GK zones. Current scenario cell highlighted with accent border. Table uses `width: 100%` with `tableLayout: fixed` to fill the full card width.
 
 **Stress** (`stress.js`) — forward-looking stress testing.
 - Linear 40-year GK projection chart (`GKLineChart`) with milestone table.
@@ -120,7 +133,7 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 - `DEFAULT_GIST_ID` — hardcoded fallback Gist ID (`"2b713c829a9a20c576dfa7612035e2ad"`).
 - `SettingsSheet` — slide-up modal for cloud sync (GitHub Gist token + ID, save/load buttons) and local backup (export/import JSON, reset to defaults).
 - `Header` — sticky top bar with app logo and settings button.
-- `App` — root component; owns `state`/`setState` via `usePersistedState`; routes to `TodayView`, `PlanView`, `StressView`, `HistoryView`.
+- `App` — root component; owns `state`/`setState` via `usePersistedState`; routes to `TodayView`, `PlanView`, `FreedomView`, `StressView`, `HistoryView`. Tab order: Today · Plan · Freedom · Stress · History.
 
 ### State (localStorage key: `"harari-dashboard-state"`)
 
@@ -139,7 +152,7 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
   monthlySalaryPartnerEUR: 0,
 
   // Phase
-  currentPhase: "employed",  // "employed" | "laid_off" | "lean_fire" | "full_fire"
+  currentPhase: "employed",  // "employed" | "coast_fire" | "barista_fire" | "laid_off" | "lean_fire" | "full_fire"
 
   // GK simulation inputs
   gkNominalReturn: 7.0,   // % blended portfolio nominal return
@@ -150,9 +163,19 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
   gkHistory: [],  // [{ id, yearLabel, portfolioStart, actualReturn, actualInflation,
                   //    lastWithdrawal, proposedWithdrawal, finalWithdrawal, trigger, wr, timestamp }]
 
+  // Personal context (used by trigger evaluation)
+  userBirthYear: 1993,
+  daughterBirthYear: 2022,
+  ecbDepositRate: 2.0,
+  healthInsuranceMonthlyEUR: 19,
+  sorrSeverityPct: 15,
+
   // Cloud sync
   cloudGistId: "",
   cloudToken: "",
+
+  // Settings
+  showAdvanced: false,
 }
 ```
 
@@ -161,9 +184,13 @@ Key variable notes:
 - `annualExpenses` — derived as `(monthlyEssentialsEUR + monthlyFunEUR) × 12` via `deriveCashflow`.
 - `surplusMonthly` — derived as `incomeMonthly − totalExpenses`; negative = drawing from portfolio.
 - `currentPhase: "laid_off"` forces `primarySalary = 0` in `deriveCashflow`.
+- `currentPhase: "coast_fire"` — earning covers expenses, portfolio compounds untouched. 86% growth target.
+- `currentPhase: "barista_fire"` — part-time income supplements small portfolio draws. 80% growth target.
+- `currentPhase: "lean_fire"` — labelled "Lean Independence" in UI. Essentials-only from portfolio, no income required.
 - `bgCgtRatePct` — Bulgarian law (Art. 13 ZDDFL) exempts UCITS ETFs traded on regulated EU/EEA markets (VWCE, XEON on Xetra) from CGT entirely. Default is 0%. The 10% option covers non-exempt instruments.
 - `cloudToken` — GitHub classic PAT with `gist` scope (`ghp_...`). Fine-grained tokens do not support the Gist API.
 - `gkHistory` — grows as the user records each year-end. Used to determine `lastWithdrawal` baseline throughout the app.
+- `userBirthYear`, `daughterBirthYear`, `ecbDepositRate`, `healthInsuranceMonthlyEUR`, `sorrSeverityPct` — personal context fields used by trigger evaluation. Editable in Settings.
 
 ### GitHub Gist Sync
 
@@ -171,7 +198,7 @@ Optional cross-device sync. Setup: classic PAT at `github.com/settings/tokens` w
 
 ### Service Worker (`sw.js`)
 
-`SW_VERSION` must stay in lock-step with `APP_VERSION` in `engine.js`. Uses **stale-while-revalidate**: serves cached asset instantly, refreshes in background, swaps on next load. Currently the `ASSETS` list only includes `script.js` — all other JS files are fetched from the network on each visit (stale-while-revalidate still caches them after first fetch).
+`SW_VERSION` must stay in lock-step with `APP_VERSION` in `engine.js`. Uses **stale-while-revalidate**: serves cached asset instantly, refreshes in background, swaps on next load. The `ASSETS` list includes `script.js` and `freedom.js` — other JS files are fetched from the network on each visit (stale-while-revalidate still caches them after first fetch).
 
 ### Tests (`tests.html`)
 
@@ -185,7 +212,7 @@ Open in browser. `engine.js` exposes `window.__FIRE_TESTS__` with `{ calcGKNextS
 - **Withdrawal model: Guyton-Klinger** with IWR 4.0% baseline. Guardrails are dynamic (±20% of `initialWR`), not static absolute values. No inflation cap.
 - **GK zone display** in `getGKZone(wr)` and `GKZoneRibbon` uses the static 3.2% / 4.0% / 4.8% values as informational labels for the canonical 4% IWR framework — these are display-only and do not affect the simulation.
 - **FIRE targets** are derived from `annualExpenses` (never hardcoded): `annualExpenses / iwr` for each tier.
-- **Lean FIRE** uses `essentials × 12 / 0.045` (not full expenses) — it's the minimum threshold, not a recommendation. A GK 10% cut at this tier drops below essential spending; the UI shows a caution note.
+- **Lean FIRE** (labelled "Lean Independence" in UI, phase ID remains `lean_fire`) uses `essentials × 12 / 0.045` (not full expenses) — it's the minimum threshold, not a recommendation. A GK 10% cut at this tier drops below essential spending; the UI shows a caution note.
 - **Tax**: Bulgarian UCITS ETF gains are CGT-exempt (Art. 13 ZDDFL). Draw order (Cash → XEON → Bonds → VWCE) is optimal under this exemption — there's no tax-loss harvesting value at 0% CGT.
 - **Draw cascade** in `monthlyRecommendation`: Cash first (no tax, no sequence risk), then XEON (stable value), then Bonds, then VWCE last (growth, never sell in drawdowns).
 - No external state management — React `useState` + localStorage only.
