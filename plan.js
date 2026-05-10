@@ -66,7 +66,7 @@ function PlanView({ state, setState }) {
           title="Where in your journey are you?"
           subtitle="The phase sets target allocation and the cashflow assumptions. Switch when life changes."
         />
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 10 }}>
           {Object.values(PHASES).map(p => (
             <PhaseBadge
               key={p.id} id={p.id}
