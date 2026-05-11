@@ -98,20 +98,21 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 
 `monthsToTarget(portfolio, target, monthlySurplus, realReturnMonthly)` — standalone pure function in `engine.js` (exported to `window`). Uses the closed-form FV formula `n = ln((F·r + c) / (P·r + c)) / ln(1+r)` with **geometric monthly rate** `r = (1 + realReturn)^(1/12) − 1` (not nominal `r/12`). Guards negative denominators to return `Infinity`. Used by both Today and Freedom tabs.
 
-**Plan** (`plan.js`) — strategy inputs.
+**Plan** (`plan.js`) — strategy inputs. This is the **single source of truth** for all financial variables. Today and Freedom are visualization-only dashboards; Plan is where numbers are entered.
 - Phase selector (3×2 grid on mobile, 3-column on desktop for 6 phases; switches `currentPhase`; switching to `laid_off` zeros primary salary).
 - Bucket balance editors (`NumberField` for VWCE, XEON, Bonds, Cash).
 - Allocation drift bars (actual % vs. phase targets, with range bands).
 - Monthly income & spending inputs (`monthlySalaryEUR`, `monthlySalaryPartnerEUR`, `monthlyEssentialsEUR`, `monthlyFunEUR`).
+- **Post-exit income sources** — three configurable sources (freelance/consulting, part-time employment, passive/rental/other), each with `enabled` Toggle, `amt` NumberField (€/mo), and `dur` PrecisionSlider (1–600 months; 600 = Indefinite). State keys: `freelanceEnabled/Amt/Dur`, `parttimeEnabled/Amt/Dur`, `passiveEnabled/Amt/Dur`. Partner income amount (`monthlySalaryPartnerEUR`) is set in the income section above; its toggle and duration in the Freedom scenario are stored as `partnerIncludedInScenario` / `partnerDurScenario`.
 - Assumptions: `gkNominalReturn`, `gkInflation`, `bgCgtRatePct`.
 
-**Freedom** (`freedom.js`) — financial independence scenario modeler. All inputs use local `useState` (not persisted) — it's a sandbox for exploring "what if" scenarios without modifying actual settings. The 5 sections are interconnected: exit portfolio flows from Section 2 into Sections 3–5, and monthly gap from Section 3 flows into Section 4.
+**Freedom** (`freedom.js`) — financial independence scenario modeler. **Mostly read-only** — it visualizes variables from Plan state. The only editable inputs are scenario-specific: the `extraMonths` slider, exit scenario inputs (Section 2), and the partner income toggle/duration in Section 3. All Freedom state is persisted to global state (no local `useState`). The 5 sections are interconnected: exit portfolio flows from Section 2 into Sections 3–5, and monthly gap from Section 3 flows into Section 4.
 
-- **Section 1: Employment Countdown** — Days since `EMPLOYMENT_START` (Jan 1 2026), EUR earned and invested since start. "N more months" `PrecisionSlider` (0–24) projects additional portfolio using **primary salary surplus only** (excludes partner/side income) with **simple addition** (no compounding): `projectedPortfolio = portfolio + N × max(0, primarySalary − totalExpenses)`.
+- **Section 1: Employment Countdown** — Days since `EMPLOYMENT_START` (Jan 1 2026), EUR earned and invested since start. "N more months" `PrecisionSlider` (0–24) projects additional portfolio using **primary salary surplus only** (excludes partner/side income) with **simple addition** (no compounding): `projectedPortfolio = portfolio + N × max(0, primarySalary − totalExpenses)`. Persisted as `extraMonths`.
 
-- **Section 2: Exit Scenario Simulator** — Inputs: exit timing (0–24 months out), severance (0–12 months of salary), bonus toggle + amount, unpaid vacation days. Computes `exitPortfolio = currentPortfolio + (monthsUntilExit × surplusMonthly) + lumpSum`. Shows best/worst case range. **Independence snapshot**: 3 compact cards with left accent borders showing (a) safe monthly income at 4% IWR, (b) essentials coverage % with EUR gap, (c) full lifestyle coverage % with EUR gap.
+- **Section 2: Exit Scenario Simulator** — Inputs: exit timing (0–24 months out), severance (0–12 months of salary), bonus toggle + amount, unpaid vacation days. All persisted as `exitMonthsOut`, `severanceMonths`, `bonusEnabled`, `bonusAmount`, `vacationDays`. Computes `exitPortfolio = currentPortfolio + (monthsUntilExit × surplusMonthly) + lumpSum`. Shows best/worst case range. **Independence snapshot**: 3 compact cards with left accent borders showing (a) safe monthly income at 4% IWR, (b) essentials coverage % with EUR gap, (c) full lifestyle coverage % with EUR gap.
 
-- **Section 3: Hybrid Income Model** — 4 toggleable income sources (freelance, part-time, partner, passive), each with amount slider and **duration slider** (1–600 months; 600 = "Indefinite"). Expenses adjustable via essentials + fun sliders. The `incomeAtMonth(m)` helper computes income at any month post-exit, accounting for expiring income sources. `avgMonthlyIncome` time-weights `incomeAtMonth(m)` over a **120-month planning horizon** so the Results pill (labelled "Avg income · avg/mo · 10yr") and the Sensitivity Matrix highlight are duration-aware — a 1-month income stream contributes 1/120th of its face value rather than the full amount. `snapshotGap` (month-0 gap) is kept separately for the Drawdown subtitle ("Drawing X/mo initially"). Derives: avg monthly income, monthly gap (from avg), effective WR (color-coded by GK zone), adjusted FIRE target.
+- **Section 3: Hybrid Income Model** — Income sources are **read-only displays** that reflect the values configured in Plan. Freelance, part-time, and passive sources show an "Edit in Plan" badge; only their enabled/amount/duration from Plan state are shown. Partner income shows amount locked from `monthlySalaryPartnerEUR`, but the toggle to include/exclude (`partnerIncludedInScenario`) and duration (`partnerDurScenario`) are editable here. Expenses panel shows read-only `monthlyEssentialsEUR` + `monthlyFunEUR` from Plan with an "Edit in Plan" badge. `incomeAtMonth(m)` computes income at any month post-exit, accounting for expiring sources. `avgMonthlyIncome` time-weights `incomeAtMonth(m)` over a **120-month planning horizon** so the Results pill (labelled "Avg income · avg/mo · 10yr") and the Sensitivity Matrix highlight are duration-aware. `snapshotGap` (month-0 gap) is kept separately for the Drawdown subtitle ("Drawing X/mo initially"). Derives: avg monthly income, monthly gap (from avg), effective WR (color-coded by GK zone), adjusted FIRE target.
 
 - **Section 4: Bucket Drawdown Sequencer** — Duration-aware month-by-month simulation using `incomeAtMonth(m)` for varying monthly gaps. Draw cascade: Cash → XEON → Bonds → VWCE. VWCE compounds at `gkNominalReturn` while not being drawn. `DrawdownChart` is a pure SVG stacked area chart using `ResizeObserver` to fill 100% container width. Shows runway cards for each bucket. If no drawdown needed (all income covers expenses), shows portfolio growth projection.
 
@@ -176,6 +177,31 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 
   // Settings
   showAdvanced: false,
+
+  // Freedom tab — employment tracker
+  extraMonths: 0,
+
+  // Freedom tab — exit scenario (UI lives in Freedom, persisted to global state)
+  exitMonthsOut: 3,
+  severanceMonths: 0,
+  bonusEnabled: false,
+  bonusAmount: 0,
+  vacationDays: 0,
+
+  // Post-exit income sources (configured in Plan tab, read by Freedom tab)
+  freelanceEnabled: false,
+  freelanceAmt: 0,
+  freelanceDur: 600,
+  parttimeEnabled: false,
+  parttimeAmt: 0,
+  parttimeDur: 600,
+  passiveEnabled: false,
+  passiveAmt: 0,
+  passiveDur: 600,
+
+  // Freedom scenario — partner income controls (amount comes from monthlySalaryPartnerEUR)
+  partnerIncludedInScenario: true,
+  partnerDurScenario: 600,
 }
 ```
 

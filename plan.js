@@ -237,6 +237,59 @@ function PlanView({ state, setState }) {
         </div>
       </Card>
 
+      {/* Post-exit income sources */}
+      <Card>
+        <SectionHeader
+          eyebrow="Post-exit"
+          title="Income after employment"
+          subtitle="Configure income you expect after leaving work. The Freedom tab reads these directly — amounts and durations flow through to the scenario model."
+        />
+        <Stack gap={20}>
+          {[
+            { label: "Freelance / consulting", enabledKey: "freelanceEnabled", amtKey: "freelanceAmt", durKey: "freelanceDur", max: 8000 },
+            { label: "Part-time employment",   enabledKey: "parttimeEnabled",  amtKey: "parttimeAmt",  durKey: "parttimeDur",  max: 6000 },
+            { label: "Passive / rental / other", enabledKey: "passiveEnabled", amtKey: "passiveAmt",  durKey: "passiveDur",  max: 3000 },
+          ].map(src => {
+            const enabled = !!state[src.enabledKey];
+            return (
+              <div key={src.label} style={{ opacity: enabled ? 1 : 0.5, transition: "opacity 200ms" }}>
+                <Row gap={12} align="center" style={{ marginBottom: enabled ? 10 : 0 }}>
+                  <Toggle value={enabled} onChange={v => updateState(src.enabledKey, v)} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{src.label}</span>
+                  {enabled && (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--good)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
+                      {fmtEur(state[src.amtKey] || 0)}/mo{(state[src.durKey] || 600) < 600 ? ` × ${state[src.durKey]}mo` : ""}
+                    </span>
+                  )}
+                </Row>
+                {enabled && (
+                  <Stack gap={8}>
+                    <NumberField
+                      label="Monthly amount"
+                      value={state[src.amtKey] || 0}
+                      onChange={v => updateState(src.amtKey, v)}
+                      min={0} max={src.max} step={50}
+                      prefix="€" format={v => v.toLocaleString("en-GB")}
+                    />
+                    <PrecisionSlider
+                      label="Duration"
+                      value={state[src.durKey] || 600}
+                      onChange={v => updateState(src.durKey, v)}
+                      min={1} max={600} step={1}
+                      format={v => v >= 600 ? "Indefinite" : v >= 12 ? `${(v / 12).toFixed(1)} years (${v}mo)` : `${v} months`}
+                      accent="var(--fg-soft)"
+                    />
+                  </Stack>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
+            Partner income of <strong style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(state.monthlySalaryPartnerEUR || 0)}/mo</strong> is set above in the income section. Toggle its inclusion and duration in the Freedom tab.
+          </div>
+        </Stack>
+      </Card>
+
       {/* Assumptions */}
       <Card>
         <SectionHeader eyebrow="Assumptions" title="Returns & inflation" />
