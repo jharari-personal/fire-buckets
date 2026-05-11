@@ -1,7 +1,7 @@
 // ─── FREEDOM tab — financial independence lens + scenario modeler ───
 // Story: where you stand → when you exit → what you earn after → how long it lasts
 
-const { useState, useMemo, useCallback } = React;
+const { useMemo } = React;
 
 const EMPLOYMENT_START = new Date(2026, 0, 1); // Jan 1 2026
 
@@ -145,40 +145,26 @@ function SensitivityGrid({ exitPortfolio, currentSpend, currentIncome, isMobile 
   );
 }
 
-// ─── Toggle + Slider combo for income sources with optional duration ───
-function IncomeSource({ label, enabled, onToggle, value, onChange, max, durationMonths, onDurationChange, isMobile }) {
+// ─── Read-only income source row for Section 3 ───
+function ReadOnlyIncomeRow({ label, enabled, amt, dur }) {
   return (
-    <div style={{ opacity: enabled ? 1 : 0.45, transition: "opacity 200ms" }}>
-      <Row gap={12} align="center" style={{ marginBottom: enabled ? 8 : 0 }}>
-        <Toggle value={enabled} onChange={onToggle} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{label}</span>
-        {enabled && (
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--good)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
-            {fmtEur(value)}/mo{durationMonths < 600 ? ` × ${durationMonths}mo` : ""}
-          </span>
-        )}
+    <div style={{ opacity: enabled ? 1 : 0.4 }}>
+      <Row gap={10} align="center">
+        <div style={{ width: 7, height: 7, borderRadius: 999, background: enabled ? "var(--good)" : "var(--fg-soft)", flexShrink: 0 }} />
+        <span style={{ fontSize: 13, color: enabled ? "var(--fg)" : "var(--fg-soft)" }}>{label}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: enabled ? "var(--good)" : "var(--fg-soft)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
+          {enabled
+            ? `${fmtEur(amt)}/mo${dur < 600 ? ` · ${dur >= 12 ? `${(dur / 12).toFixed(1)}yr` : `${dur}mo`}` : ""}`
+            : "Disabled"}
+        </span>
       </Row>
-      {enabled && (
-        <Stack gap={6}>
-          <PrecisionSlider
-            label="" value={value} onChange={onChange}
-            min={0} max={max} step={50} prefix="€" suffix="/mo"
-            accent="var(--good)"
-          />
-          <PrecisionSlider
-            label="Duration" value={durationMonths} onChange={onDurationChange}
-            min={1} max={600} step={1}
-            format={v => v >= 600 ? "Indefinite" : v >= 12 ? `${(v / 12).toFixed(1)} years (${v}mo)` : `${v} months`}
-            accent="var(--fg-soft)"
-          />
-        </Stack>
-      )}
     </div>
   );
 }
 
 // ─── Main View ───
-function FreedomView({ state }) {
+function FreedomView({ state, setState }) {
+  const updateState = (k, v) => setState(s => ({ ...s, [k]: v }));
   const { isMobile, isDesktop } = useViewport();
   const cf = deriveCashflow(state);
   const portfolio = (state.bucketVWCE || 0) + (state.bucketXEON || 0) + (state.bucketFixedIncome || 0) + (state.bucketCash || 0);
@@ -190,17 +176,17 @@ function FreedomView({ state }) {
   const earnedSinceStart = monthsSinceStart * (state.monthlySalaryEUR || 0);
   const investedSinceStart = monthsSinceStart * Math.max(0, cf.surplusMonthly);
 
-  const [extraMonths, setExtraMonths] = useState(0);
+  const extraMonths = state.extraMonths || 0;
   const primaryOnlySurplus = Math.max(0, cf.primarySalary - cf.totalExpenses);
   const extraInvested = extraMonths * primaryOnlySurplus;
   const projectedPortfolio = portfolio + extraInvested;
 
   // ── Section 2: Exit Scenario ──
-  const [exitMonthsOut, setExitMonthsOut] = useState(3);
-  const [severanceMonths, setSeveranceMonths] = useState(0);
-  const [bonusEnabled, setBonusEnabled] = useState(false);
-  const [bonusAmount, setBonusAmount] = useState(0);
-  const [vacationDays, setVacationDays] = useState(0);
+  const exitMonthsOut = state.exitMonthsOut ?? 3;
+  const severanceMonths = state.severanceMonths || 0;
+  const bonusEnabled = state.bonusEnabled || false;
+  const bonusAmount = state.bonusAmount || 0;
+  const vacationDays = state.vacationDays || 0;
 
   const monthsUntilExit = exitMonthsOut;
   const portfolioGrowth = monthsUntilExit * Math.max(0, cf.surplusMonthly);
@@ -213,32 +199,23 @@ function FreedomView({ state }) {
   const exitDate = new Date(now.getFullYear(), now.getMonth() + exitMonthsOut, 1);
   const exitLabel = exitDate.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
 
-  // Best / worst case
   const worstCase = portfolio + portfolioGrowth;
   const bestCase12 = portfolio + portfolioGrowth + 12 * (state.monthlySalaryEUR || 0) + bonusAmount + 30 * dailyRate;
 
   // ── Section 3: Hybrid Income ──
-  const [freelanceEnabled, setFreelanceEnabled] = useState(false);
-  const [freelanceAmt, setFreelanceAmt] = useState(0);
-  const [freelanceDur, setFreelanceDur] = useState(600);
-  const [parttimeEnabled, setParttimeEnabled] = useState(false);
-  const [parttimeAmt, setParttimeAmt] = useState(0);
-  const [parttimeDur, setParttimeDur] = useState(600);
-  const [partnerAmt, setPartnerAmt] = useState(state.monthlySalaryPartnerEUR || 0);
-  const [partnerDur, setPartnerDur] = useState(600);
-  const [passiveEnabled, setPassiveEnabled] = useState(false);
-  const [passiveAmt, setPassiveAmt] = useState(0);
-  const [passiveDur, setPassiveDur] = useState(600);
-  const [scenarioEssentials, setScenarioEssentials] = useState(state.monthlyEssentialsEUR || 2000);
-  const [scenarioFun, setScenarioFun] = useState(state.monthlyFunEUR || 200);
+  // Partner income: amount from Plan (read-only), toggle + duration are scenario-specific
+  const partnerAmt = state.monthlySalaryPartnerEUR || 0;
+  const partnerIncluded = state.partnerIncludedInScenario !== false;
+  const partnerDur = state.partnerDurScenario || 600;
 
-  // Income sources with durations — used by drawdown sequencer for month-by-month accuracy
+  // All income sources read from global state — configured in Plan tab (except partner controls)
   const incomeSources = [
-    { enabled: freelanceEnabled, amt: freelanceAmt, dur: freelanceDur },
-    { enabled: parttimeEnabled,  amt: parttimeAmt,  dur: parttimeDur },
-    { enabled: true,             amt: partnerAmt,   dur: partnerDur },
-    { enabled: passiveEnabled,   amt: passiveAmt,   dur: passiveDur },
+    { enabled: state.freelanceEnabled || false, amt: state.freelanceAmt || 0, dur: state.freelanceDur || 600 },
+    { enabled: state.parttimeEnabled || false,  amt: state.parttimeAmt || 0,  dur: state.parttimeDur || 600 },
+    { enabled: partnerIncluded,                 amt: partnerAmt,              dur: partnerDur },
+    { enabled: state.passiveEnabled || false,   amt: state.passiveAmt || 0,   dur: state.passiveDur || 600 },
   ];
+
   // "Current" hybrid income (month 0) — used for summary stats
   const hybridIncome = incomeSources.reduce((s, src) => s + (src.enabled ? src.amt : 0), 0);
   // Helper: income at month m post-exit
@@ -251,7 +228,7 @@ function FreedomView({ state }) {
   const avgMonthlyIncome = Array.from({ length: 120 }, (_, m) => incomeAtMonth(m))
     .reduce((s, v) => s + v, 0) / 120;
 
-  const scenarioExpenses = scenarioEssentials + scenarioFun;
+  const scenarioExpenses = (state.monthlyEssentialsEUR || 0) + (state.monthlyFunEUR || 0);
   // Snapshot gap for drawdown subtitle ("Drawing X/mo initially")
   const snapshotGap = Math.max(0, scenarioExpenses - hybridIncome);
   const monthlyGap = Math.max(0, scenarioExpenses - avgMonthlyIncome);
@@ -260,7 +237,7 @@ function FreedomView({ state }) {
   const wrZone = getGKZone(effectiveWR);
 
   const safeMonthly = exitPortfolio * GK_CONFIG.IWR / 12;
-  const essentialsCoverage = scenarioEssentials > 0 ? (safeMonthly / scenarioEssentials) * 100 : 0;
+  const essentialsCoverage = (state.monthlyEssentialsEUR || 0) > 0 ? (safeMonthly / (state.monthlyEssentialsEUR || 0)) * 100 : 0;
   const lifestyleCoverage = scenarioExpenses > 0 ? (safeMonthly / scenarioExpenses) * 100 : 0;
 
   const fullFireTarget = (scenarioExpenses * 12) / GK_CONFIG.IWR;
@@ -268,10 +245,8 @@ function FreedomView({ state }) {
 
   // ── Section 4: Drawdown sequencer (duration-aware) ──
   const hasAnyIncome = incomeSources.some(s => s.enabled && s.amt > 0);
-  const needsDrawdown = monthlyGap > 0 || (hasAnyIncome && incomeSources.some(s => s.enabled && s.dur < 600));
 
   const drawdownData = useMemo(() => {
-    // Check if any month in the horizon has a gap
     const anyGapExists = Array.from({ length: 121 }, (_, m) => Math.max(0, scenarioExpenses - incomeAtMonth(m))).some(g => g > 0);
     if (!anyGapExists) return { series: [], transitions: [], months: 0 };
 
@@ -346,7 +321,12 @@ function FreedomView({ state }) {
     }
 
     return { series, transitions, months: series.length - 1 };
-  }, [exitPortfolio, scenarioExpenses, incomeSources, state.bucketVWCE, state.bucketXEON, state.bucketFixedIncome, state.bucketCash, state.gkNominalReturn, portfolio]);
+  }, [exitPortfolio, state.monthlyEssentialsEUR, state.monthlyFunEUR,
+      state.freelanceEnabled, state.freelanceAmt, state.freelanceDur,
+      state.parttimeEnabled, state.parttimeAmt, state.parttimeDur,
+      state.partnerIncludedInScenario, state.monthlySalaryPartnerEUR, state.partnerDurScenario,
+      state.passiveEnabled, state.passiveAmt, state.passiveDur,
+      state.bucketVWCE, state.bucketXEON, state.bucketFixedIncome, state.bucketCash, state.gkNominalReturn, portfolio]);
 
   // Derive runway from the drawdown simulation data (accounts for varying monthly gaps)
   const { cashRunway, xeonRunway, bondsRunway, totalDefensiveRunway } = useMemo(() => {
@@ -390,7 +370,7 @@ function FreedomView({ state }) {
 
         <PrecisionSlider
           label="What would N more months mean?"
-          value={extraMonths} onChange={setExtraMonths}
+          value={extraMonths} onChange={v => updateState("extraMonths", v)}
           min={0} max={24} step={1} suffix=" months"
           accent="var(--accent)"
           hint={extraMonths > 0
@@ -410,7 +390,7 @@ function FreedomView({ state }) {
         <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 16, marginBottom: 16 }}>
           <PrecisionSlider
             label="Exit timing"
-            value={exitMonthsOut} onChange={setExitMonthsOut}
+            value={exitMonthsOut} onChange={v => updateState("exitMonthsOut", v)}
             min={0} max={24} step={1}
             format={v => {
               const d = new Date(now.getFullYear(), now.getMonth() + v, 1);
@@ -421,7 +401,7 @@ function FreedomView({ state }) {
           />
           <PrecisionSlider
             label="Severance"
-            value={severanceMonths} onChange={setSeveranceMonths}
+            value={severanceMonths} onChange={v => updateState("severanceMonths", v)}
             min={0} max={12} step={1}
             format={v => `${v} mo (${fmtEurK(v * (state.monthlySalaryEUR || 0))})`}
             accent="var(--warn)"
@@ -432,13 +412,13 @@ function FreedomView({ state }) {
         <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 16, marginBottom: 20 }}>
           <div>
             <Row gap={12} align="center" style={{ marginBottom: 8 }}>
-              <Toggle value={bonusEnabled} onChange={setBonusEnabled} />
+              <Toggle value={bonusEnabled} onChange={v => updateState("bonusEnabled", v)} />
               <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>Bonus payout</span>
             </Row>
             {bonusEnabled && (
               <NumberField
                 label="Bonus amount"
-                value={bonusAmount} onChange={setBonusAmount}
+                value={bonusAmount} onChange={v => updateState("bonusAmount", v)}
                 min={0} max={100000} step={500} prefix="€"
                 format={v => fmtEur(v)}
               />
@@ -446,7 +426,7 @@ function FreedomView({ state }) {
           </div>
           <NumberField
             label="Unpaid vacation days"
-            value={vacationDays} onChange={setVacationDays}
+            value={vacationDays} onChange={v => updateState("vacationDays", v)}
             min={0} max={60} step={1}
             format={v => `${v} days (${fmtEur(v * dailyRate)})`}
           />
@@ -489,7 +469,7 @@ function FreedomView({ state }) {
           </div>
           {/* Essentials coverage */}
           {(() => {
-            const essGap = Math.max(0, scenarioEssentials - safeMonthly);
+            const essGap = Math.max(0, (state.monthlyEssentialsEUR || 0) - safeMonthly);
             const essColor = essentialsCoverage >= 100 ? "var(--good)" : "var(--warn)";
             return (
               <div style={{ padding: "14px 16px", background: "var(--surface-1)", borderRadius: 12, borderLeft: `3px solid ${essColor}` }}>
@@ -498,7 +478,7 @@ function FreedomView({ state }) {
                   <Pill tone={essentialsCoverage >= 100 ? "good" : "warn"} size="xs">{essentialsCoverage.toFixed(0)}%</Pill>
                 </Row>
                 <div style={{ fontSize: 18, fontWeight: 700, color: essColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
-                  {fmtEur(Math.min(safeMonthly, scenarioEssentials))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(scenarioEssentials)}</span>
+                  {fmtEur(Math.min(safeMonthly, state.monthlyEssentialsEUR || 0))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(state.monthlyEssentialsEUR || 0)}</span>
                 </div>
                 {essGap > 0 && <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 4 }}>Gap: {fmtEur(essGap)}/mo needs income</div>}
                 {essGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
@@ -531,26 +511,85 @@ function FreedomView({ state }) {
         <SectionHeader
           eyebrow="Post-exit"
           title="Hybrid income model"
-          subtitle="What income sources do you have after leaving? The portfolio only needs to cover the gap."
+          subtitle="Income after leaving work — configure sources in the Plan tab. The portfolio only needs to cover the gap."
         />
 
         <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 20, marginBottom: 20 }}>
-          <Stack gap={16}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Income sources</div>
-            <IncomeSource label="Freelance / consulting" enabled={freelanceEnabled} onToggle={setFreelanceEnabled} value={freelanceAmt} onChange={setFreelanceAmt} max={8000} durationMonths={freelanceDur} onDurationChange={setFreelanceDur} isMobile={isMobile} />
-            <IncomeSource label="Part-time employment" enabled={parttimeEnabled} onToggle={setParttimeEnabled} value={parttimeAmt} onChange={setParttimeAmt} max={6000} durationMonths={parttimeDur} onDurationChange={setParttimeDur} isMobile={isMobile} />
+          {/* Income sources — read-only from Plan, partner toggle/duration editable here */}
+          <Stack gap={14}>
+            <Row justify="space-between" align="center">
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Income sources</div>
+              <Pill tone="ghost" size="xs">Edit in Plan</Pill>
+            </Row>
+
+            <ReadOnlyIncomeRow
+              label="Freelance / consulting"
+              enabled={state.freelanceEnabled || false}
+              amt={state.freelanceAmt || 0}
+              dur={state.freelanceDur || 600}
+            />
+            <ReadOnlyIncomeRow
+              label="Part-time employment"
+              enabled={state.parttimeEnabled || false}
+              amt={state.parttimeAmt || 0}
+              dur={state.parttimeDur || 600}
+            />
+
+            {/* Partner income — amount locked to Plan value, toggle + duration editable */}
             <div>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)", display: "block", marginBottom: 8 }}>Partner income</span>
-              <PrecisionSlider label="" value={partnerAmt} onChange={setPartnerAmt} min={0} max={10000} step={50} prefix="€" suffix="/mo" accent="var(--good)" />
-              <PrecisionSlider label="Duration" value={partnerDur} onChange={setPartnerDur} min={1} max={600} step={1} format={v => v >= 600 ? "Indefinite" : v >= 12 ? `${(v / 12).toFixed(1)} years (${v}mo)` : `${v} months`} accent="var(--fg-soft)" />
+              <Row gap={12} align="center" style={{ marginBottom: partnerIncluded ? 8 : 0 }}>
+                <Toggle value={partnerIncluded} onChange={v => updateState("partnerIncludedInScenario", v)} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>Partner income</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: partnerIncluded ? "var(--good)" : "var(--fg-soft)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
+                  {partnerIncluded
+                    ? `${fmtEur(partnerAmt)}/mo${partnerDur < 600 ? ` · ${partnerDur >= 12 ? `${(partnerDur / 12).toFixed(1)}yr` : `${partnerDur}mo`}` : ""}`
+                    : "Excluded"}
+                </span>
+              </Row>
+              {partnerIncluded && (
+                <PrecisionSlider
+                  label="Duration"
+                  value={partnerDur}
+                  onChange={v => updateState("partnerDurScenario", v)}
+                  min={1} max={600} step={1}
+                  format={v => v >= 600 ? "Indefinite" : v >= 12 ? `${(v / 12).toFixed(1)} years (${v}mo)` : `${v} months`}
+                  accent="var(--fg-soft)"
+                />
+              )}
             </div>
-            <IncomeSource label="Passive / rental / other" enabled={passiveEnabled} onToggle={setPassiveEnabled} value={passiveAmt} onChange={setPassiveAmt} max={3000} durationMonths={passiveDur} onDurationChange={setPassiveDur} isMobile={isMobile} />
+
+            <ReadOnlyIncomeRow
+              label="Passive / rental / other"
+              enabled={state.passiveEnabled || false}
+              amt={state.passiveAmt || 0}
+              dur={state.passiveDur || 600}
+            />
           </Stack>
 
-          <Stack gap={16}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Expenses</div>
-            <PrecisionSlider label="Monthly essentials" value={scenarioEssentials} onChange={setScenarioEssentials} min={500} max={6000} step={25} prefix="€" suffix="/mo" accent="var(--fg-mute)" hint="Rent, groceries, utilities, insurance" />
-            <PrecisionSlider label="Monthly fun" value={scenarioFun} onChange={setScenarioFun} min={0} max={3000} step={25} prefix="€" suffix="/mo" accent="var(--fg-mute)" hint="Travel, dining, discretionary" />
+          {/* Expenses — read-only from Plan */}
+          <Stack gap={14}>
+            <Row justify="space-between" align="center">
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Expenses</div>
+              <Pill tone="ghost" size="xs">Edit in Plan</Pill>
+            </Row>
+            <div style={{ padding: "16px", background: "var(--surface-2)", borderRadius: 12 }}>
+              <Stack gap={10}>
+                <Row justify="space-between" align="baseline">
+                  <span style={{ fontSize: 13, color: "var(--fg-mute)" }}>Monthly essentials</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(state.monthlyEssentialsEUR || 0)}</span>
+                </Row>
+                <Row justify="space-between" align="baseline">
+                  <span style={{ fontSize: 13, color: "var(--fg-mute)" }}>Monthly fun</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(state.monthlyFunEUR || 0)}</span>
+                </Row>
+                <div style={{ borderTop: "1px solid var(--hairline)", paddingTop: 10 }}>
+                  <Row justify="space-between" align="baseline">
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Total monthly</span>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(scenarioExpenses)}</span>
+                  </Row>
+                </div>
+              </Stack>
+            </div>
           </Stack>
         </div>
 

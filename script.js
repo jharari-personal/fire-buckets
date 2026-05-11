@@ -39,6 +39,31 @@ const DEFAULT_STATE = {
   cloudGistId: "",
   cloudToken: "",
   showAdvanced: false,
+
+  // Freedom tab — employment tracker
+  extraMonths: 0,
+
+  // Freedom tab — exit scenario (persisted, stays in Freedom UI)
+  exitMonthsOut: 3,
+  severanceMonths: 0,
+  bonusEnabled: false,
+  bonusAmount: 0,
+  vacationDays: 0,
+
+  // Post-exit income sources (configured in Plan tab, read by Freedom tab)
+  freelanceEnabled: false,
+  freelanceAmt: 0,
+  freelanceDur: 600,
+  parttimeEnabled: false,
+  parttimeAmt: 0,
+  parttimeDur: 600,
+  passiveEnabled: false,
+  passiveAmt: 0,
+  passiveDur: 600,
+
+  // Freedom scenario — partner income controls (toggle + duration only; amount from Plan)
+  partnerIncludedInScenario: true,
+  partnerDurScenario: 600,
 };
 
 function SettingsSheet({ open, onClose, state, setState }) {
