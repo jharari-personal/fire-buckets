@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260510.1";
+const APP_VERSION = "20260511.0";
 
 const GK_CONFIG = {
   IWR: 0.04,

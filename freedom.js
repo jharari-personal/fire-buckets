@@ -247,8 +247,14 @@ function FreedomView({ state }) {
     if (src.dur < 600 && m >= src.dur) return s;
     return s + src.amt;
   }, 0);
+  // Duration-aware income averaged over 10-year planning horizon
+  const avgMonthlyIncome = Array.from({ length: 120 }, (_, m) => incomeAtMonth(m))
+    .reduce((s, v) => s + v, 0) / 120;
+
   const scenarioExpenses = scenarioEssentials + scenarioFun;
-  const monthlyGap = Math.max(0, scenarioExpenses - hybridIncome);
+  // Snapshot gap for drawdown subtitle ("Drawing X/mo initially")
+  const snapshotGap = Math.max(0, scenarioExpenses - hybridIncome);
+  const monthlyGap = Math.max(0, scenarioExpenses - avgMonthlyIncome);
   const annualGap = monthlyGap * 12;
   const effectiveWR = exitPortfolio > 0 ? (annualGap / exitPortfolio) * 100 : 0;
   const wrZone = getGKZone(effectiveWR);
@@ -552,9 +558,9 @@ function FreedomView({ state }) {
         <div style={{ background: "var(--surface-2)", borderRadius: 14, padding: isMobile ? 16 : 20 }}>
           <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(4, 1fr)" : "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <div>
-              <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Hybrid income</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: "var(--good)", fontFamily: "var(--font-mono)" }}>{fmtEur(hybridIncome)}</div>
-              <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>/month</div>
+              <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Avg income</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "var(--good)", fontFamily: "var(--font-mono)" }}>{fmtEur(avgMonthlyIncome)}</div>
+              <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>avg/mo · 10yr</div>
             </div>
             <div>
               <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Total expenses</div>
@@ -579,10 +585,10 @@ function FreedomView({ state }) {
 
           {monthlyGap > 0 && (
             <div style={{ padding: "12px 14px", background: "var(--surface-1)", borderRadius: 10, fontSize: 13, color: "var(--fg-mute)", lineHeight: 1.6 }}>
-              With hybrid income of <strong style={{ color: "var(--good)" }}>{fmtEur(hybridIncome)}/mo</strong>, your portfolio only needs to cover <strong style={{ color: "var(--bad)" }}>{fmtEur(monthlyGap)}/mo</strong>. Your real FIRE target drops from <strong>{fmtEur(fullFireTarget)}</strong> to <strong style={{ color: "var(--accent)" }}>{fmtEur(adjustedFireTarget)}</strong>.
+              With avg income of <strong style={{ color: "var(--good)" }}>{fmtEur(avgMonthlyIncome)}/mo</strong>, your portfolio only needs to cover <strong style={{ color: "var(--bad)" }}>{fmtEur(monthlyGap)}/mo</strong>. Your real FIRE target drops from <strong>{fmtEur(fullFireTarget)}</strong> to <strong style={{ color: "var(--accent)" }}>{fmtEur(adjustedFireTarget)}</strong>.
             </div>
           )}
-          {monthlyGap === 0 && hybridIncome > 0 && (
+          {monthlyGap === 0 && avgMonthlyIncome > 0 && (
             <div style={{ padding: "12px 14px", background: "var(--good-soft)", borderRadius: 10, fontSize: 13, color: "var(--good)", lineHeight: 1.6 }}>
               Your hybrid income fully covers expenses. The portfolio compounds untouched — this is Coast FIRE.
             </div>
@@ -595,7 +601,7 @@ function FreedomView({ state }) {
         <SectionHeader
           eyebrow="Drawdown"
           title="Bucket drawdown sequencer"
-          subtitle={drawdownData.series.length > 0 ? `Drawing ${fmtEur(monthlyGap)}/mo initially — Cash → XEON → Bonds → VWCE` : "No drawdown needed — all buckets compound untouched"}
+          subtitle={drawdownData.series.length > 0 ? `Drawing ${fmtEur(snapshotGap)}/mo initially — Cash → XEON → Bonds → VWCE` : "No drawdown needed — all buckets compound untouched"}
         />
 
         {drawdownData.series.length > 0 ? (
@@ -643,7 +649,7 @@ function FreedomView({ state }) {
         <SensitivityGrid
           exitPortfolio={exitPortfolio}
           currentSpend={scenarioExpenses * 12}
-          currentIncome={hybridIncome * 12}
+          currentIncome={avgMonthlyIncome * 12}
           isMobile={isMobile}
         />
         <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
