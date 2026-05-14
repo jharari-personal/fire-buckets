@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260511.1";
+const APP_VERSION = "20260514.0";
 
 const GK_CONFIG = {
   IWR: 0.04,
@@ -561,9 +561,22 @@ function effectiveFloor(bucketCfg, monthlyTotal) {
   return Math.max(staticFloor, dynFloor);
 }
 
+// Returns { underweight, overweight }.
+// - underweight: the most-pressing bucket to add money to. Floor-deficits take priority
+//   over %-allocation deficits. Always non-null when portfolio > 0.
+//   Shape: { key, meta, gap, current, targetEur, reason: "floor"|"target", floor,
+//            floorMonths, monthsCoveredByFloor, targetPct, rangeLowerPct, rangeUpperPct }
+// - overweight: the most-overweight bucket above its range upper, or null if all within
+//   tolerance. Tolerance = 0.5% of portfolio (avoids flagging rounding-level drift).
+//   Shape: { key, meta, excess, current, rangeUpperEur, rangeUpperPct, targetPct }
 function nextRebalanceBucket(state) {
   const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
-  if (portfolio <= 0) return { key: "growth", meta: BUCKET_META.growth, gap: 0, current: 0, targetEur: 0 };
+  if (portfolio <= 0) {
+    return {
+      underweight: { key: "growth", meta: BUCKET_META.growth, gap: 0, current: 0, targetEur: 0, reason: "target", floor: 0, floorMonths: 0, targetPct: 0 },
+      overweight: null,
+    };
+  }
   const phase = PHASES[state.currentPhase] || PHASES.employed;
   const cf = deriveCashflow(state);
   const map = [
@@ -573,90 +586,253 @@ function nextRebalanceBucket(state) {
     { key: "cash",       stateKey: "bucketCash",        meta: BUCKET_META.cash },
   ];
   const items = map.map(b => {
+    const cfg = phase.buckets[b.key];
     const cur = state[b.stateKey] || 0;
-    const target = phase.buckets[b.key].target / 100;
+    const targetPct = cfg.target;
+    const target = targetPct / 100;
     const targetEur = portfolio * target;
-    const floor = effectiveFloor(phase.buckets[b.key], cf.totalExpenses);
+    const floor = effectiveFloor(cfg, cf.totalExpenses);
+    const floorMonths = cfg.floorMonths || 0;
     const floorGap = Math.max(0, floor - cur);
     const pctGap = Math.max(0, targetEur - cur);
-    return { ...b, cur, target, targetEur, floor, floorGap, pctGap };
+    const rangeLowerPct = (cfg.range && cfg.range[0]) || 0;
+    const rangeUpperPct = (cfg.range && cfg.range[1]) || 100;
+    const rangeUpperEur = portfolio * rangeUpperPct / 100;
+    const excess = cur - rangeUpperEur;
+    return { ...b, cur, targetPct, targetEur, floor, floorMonths, floorGap, pctGap, rangeLowerPct, rangeUpperPct, rangeUpperEur, excess };
   });
+
   const belowFloor = items.filter(i => i.floorGap > 0).sort((a, b) => b.floorGap - a.floorGap);
+  let underweight;
   if (belowFloor.length > 0) {
     const w = belowFloor[0];
-    return { key: w.key, meta: w.meta, gap: w.floorGap, current: w.cur, targetEur: w.floor, reason: "floor" };
+    underweight = {
+      key: w.key, meta: w.meta, gap: w.floorGap, current: w.cur, targetEur: w.floor,
+      reason: "floor", floor: w.floor, floorMonths: w.floorMonths, targetPct: w.targetPct,
+      rangeLowerPct: w.rangeLowerPct, rangeUpperPct: w.rangeUpperPct,
+    };
+  } else {
+    const w = items.slice().sort((a, b) => b.pctGap - a.pctGap)[0];
+    underweight = {
+      key: w.key, meta: w.meta, gap: w.pctGap, current: w.cur, targetEur: w.targetEur,
+      reason: "target", floor: w.floor, floorMonths: w.floorMonths, targetPct: w.targetPct,
+      rangeLowerPct: w.rangeLowerPct, rangeUpperPct: w.rangeUpperPct,
+    };
   }
-  const sorted = items.slice().sort((a, b) => b.pctGap - a.pctGap);
-  const w = sorted[0];
-  return { key: w.key, meta: w.meta, gap: w.pctGap, current: w.cur, targetEur: w.targetEur, reason: "target" };
+
+  const tolerance = portfolio * 0.005; // 0.5% of portfolio
+  const over = items
+    .filter(i => i.excess > tolerance && i.key !== underweight.key)
+    .sort((a, b) => b.excess - a.excess)[0];
+  const overweight = over ? {
+    key: over.key, meta: over.meta, excess: over.excess, current: over.cur,
+    rangeUpperEur: over.rangeUpperEur, rangeUpperPct: over.rangeUpperPct, targetPct: over.targetPct,
+  } : null;
+
+  return { underweight, overweight };
 }
 
-function monthlyRecommendation(state) {
+// Returns the most recent finalWithdrawal, or 0 when accumulating (positive surplus + no
+// history), or forecast annualExpenses when actually drawing. Replaces the unconditional
+// `annualExpenses` fallback that produced phantom WR while employed.
+function effectiveLastWithdrawal(state) {
+  if (state.gkHistory && state.gkHistory.length > 0) {
+    return state.gkHistory[state.gkHistory.length - 1].finalWithdrawal;
+  }
+  const cf = deriveCashflow(state);
+  return cf.surplusMonthly >= 0 ? 0 : cf.annualExpenses;
+}
+
+// Returns a structured monthly action plan. Three modes:
+//   - "accumulating" — surplus > 0 and either no GK history or still in an earning phase.
+//     WR/zone are display-only, no fun-budget holdback. primary.verb = "Invest".
+//   - "lean_drawdown" — small shortfall fully covered by trimming the fun budget.
+//     primary.verb = "Trim fun". No sell required.
+//   - "shortfall" — shortfall exceeds fun budget. primary.verb = "Withdraw" with the
+//     cascade source (Cash → XEON → Bonds → VWCE).
+const ACCUMULATING_PHASES = new Set(["employed", "coast_fire", "barista_fire"]);
+
+function monthlyOutlook(state) {
   const cf = deriveCashflow(state);
   const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
   const fireTarget = cf.annualExpenses / GK_CONFIG.IWR;
-  const lastWithdrawal = (state.gkHistory && state.gkHistory.length > 0)
-    ? state.gkHistory[state.gkHistory.length - 1].finalWithdrawal
-    : cf.annualExpenses;
+  const lastWithdrawal = effectiveLastWithdrawal(state);
   const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
   const zone = getGKZone(wr);
+  const rebalance = nextRebalanceBucket(state);
 
-  if (cf.surplusMonthly >= 0) {
-    const need = nextRebalanceBucket(state);
-    const holdBackPctOfFun =
-      zone.id === "cut"        ? 0.50 :
-      zone.id === "elevated"   ? 0.20 :
-      zone.id === "prosperity" ? 0    :
-                                  0.10;
-    const funCut = Math.round(cf.fun * holdBackPctOfFun);
-    const transfer = Math.max(0, cf.surplusMonthly + funCut);
+  const monthsOf = (eur) => cf.totalExpenses > 0 ? (eur / cf.totalExpenses) : 0;
+
+  const buildOverweightSecondary = () => {
+    if (!rebalance.overweight) return null;
+    const o = rebalance.overweight;
     return {
-      mode: "surplus", zone, cf, need, fireTarget,
-      transfer, funKept: cf.fun - funCut, funCut,
-      headline: `Transfer ${fmtEur(transfer)} to ${need.meta.label} (${need.meta.inst})`,
+      type: "rebalance_out",
+      fromKey: o.key,
+      fromMeta: o.meta,
+      toKey: rebalance.underweight.key,
+      toMeta: rebalance.underweight.meta,
+      excessEur: Math.round(o.excess),
+      rangeUpperPct: o.rangeUpperPct,
+      targetPct: o.targetPct,
+    };
+  };
+
+  // ─── Accumulating mode ───────────────────────────────────────────────
+  const isAccumulating =
+    cf.surplusMonthly >= 0 &&
+    ((state.gkHistory || []).length === 0 || ACCUMULATING_PHASES.has(state.currentPhase));
+
+  if (isAccumulating) {
+    const u = rebalance.underweight;
+    const amount = Math.max(0, Math.round(cf.surplusMonthly));
+    const afterBalance = u.current + amount;
+    const reason = {
+      type: u.reason, // "floor" | "target"
+      gap: Math.round(u.gap),
+      floorEur: u.floor,
+      floorMonths: u.floorMonths,
+      targetPct: u.targetPct,
+      rangeLowerPct: u.rangeLowerPct,
+      rangeUpperPct: u.rangeUpperPct,
+      afterBalance,
+      afterMonths: monthsOf(afterBalance),
+      currentMonths: monthsOf(u.current),
+    };
+
+    const secondary = [];
+    const ow = buildOverweightSecondary();
+    if (ow) secondary.push(ow);
+
+    const subtitle = u.reason === "floor"
+      ? `${fmtEur(u.gap)} short of your ${u.floorMonths}-month safety floor.`
+      : (u.gap > 0
+          ? `${fmtEur(u.gap)} below ${u.targetPct}% target.`
+          : `All buckets in range — continue compounding.`);
+
+    return {
+      mode: "accumulating",
+      cf, portfolio, fireTarget, zone, wr,
+      primary: {
+        verb: "Invest", amount,
+        bucketKey: u.key, meta: u.meta, reason,
+      },
+      secondary,
+      floorContext: u.reason === "floor" ? {
+        bucketKey: u.key, meta: u.meta,
+        current: u.current, floor: u.floor, gap: u.gap, months: u.floorMonths,
+        currentMonths: monthsOf(u.current),
+      } : null,
+      headline: amount > 0
+        ? `Invest ${fmtEur(amount)} into ${u.meta.label} (${u.meta.inst})`
+        : `Balanced — no action needed`,
+      subtitle,
+      // Back-compat aliases for any caller still using monthlyRecommendation shape
+      need: { key: u.key, meta: u.meta, gap: u.gap, reason: u.reason },
+      transfer: amount, funKept: cf.fun, funCut: 0,
       tone: "good",
     };
-  } else {
-    const shortfall = -cf.surplusMonthly;
-    const funCut = Math.min(cf.fun, shortfall);
-    const drawNeeded = Math.max(0, shortfall - funCut);
+  }
 
-    // Cascade draw sources: Cash → Safety (XEON) → Stability (Bonds) → Growth (last resort).
-    // Never hardcode "draw from XEON" — check actual balances first.
-    const xeonBal  = state.bucketXEON        || 0;
-    const bondsBal = state.bucketFixedIncome || 0;
-    const cashBal  = state.bucketCash        || 0;
+  // ─── Drawdown branches ──────────────────────────────────────────────
+  const shortfall = -cf.surplusMonthly;
+  const funCut = Math.min(cf.fun, shortfall);
+  const drawNeeded = Math.max(0, shortfall - funCut);
 
-    let drawSource, drawSourceLabel, drawSourceInst;
-    let xeonWarning = false;
-
-    if (cashBal >= drawNeeded && drawNeeded > 0) {
-      drawSource = "cash"; drawSourceLabel = "Cash"; drawSourceInst = "EUR cash";
-    } else if (xeonBal > 0) {
-      drawSource = "fortress"; drawSourceLabel = "Safety"; drawSourceInst = "XEON";
-      // Warn when XEON is running thin (< 2 months of draw left)
-      if (xeonBal < drawNeeded * 2) xeonWarning = true;
-    } else if (bondsBal > 0) {
-      drawSource = "termShield"; drawSourceLabel = "Stability"; drawSourceInst = "Bonds";
-    } else {
-      drawSource = "growth"; drawSourceLabel = "Growth (last resort)"; drawSourceInst = "VWCE";
-    }
-
-    // Estimated CGT cost if forced to draw from VWCE (assumes 50% gain fraction when no costBasis)
-    const cgtRate = (state.bgCgtRatePct || 10) / 100;
-    const gainsFraction = 0.5;
-    const cgtCost = drawSource === "growth" ? Math.round(drawNeeded * gainsFraction * cgtRate) : 0;
-
+  // Lean drawdown: fun budget alone covers it
+  if (drawNeeded === 0) {
+    const secondary = [];
+    const ow = buildOverweightSecondary();
+    if (ow) secondary.push(ow);
     return {
-      mode: "shortfall", zone, cf, fireTarget,
-      shortfall, funKept: Math.max(0, cf.fun - funCut), funCut, drawNeeded,
-      drawSource, drawSourceLabel, drawSourceInst, xeonWarning, cgtCost,
-      headline: drawNeeded > 0
-        ? `Withdraw ${fmtEur(drawNeeded)} from ${drawSourceLabel} (${drawSourceInst}) this month`
-        : `Tighten fun budget by ${fmtEur(funCut)} — no withdrawal needed`,
-      tone: drawSource === "growth" ? "bad" : "warn",
+      mode: "lean_drawdown",
+      cf, portfolio, fireTarget, zone, wr,
+      primary: {
+        verb: "Trim fun", amount: Math.round(funCut),
+        bucketKey: null, meta: null,
+        reason: { type: "fun_covers", funCutEur: Math.round(funCut), funBefore: cf.fun, funAfter: cf.fun - funCut },
+      },
+      secondary,
+      floorContext: null,
+      headline: `Trim fun by ${fmtEur(funCut)} — no withdrawal needed`,
+      subtitle: `Income falls short by ${fmtEur(shortfall)} but the fun budget absorbs it.`,
+      // Back-compat
+      drawNeeded: 0, drawSource: null, drawSourceLabel: null, drawSourceInst: null,
+      shortfall, funKept: Math.max(0, cf.fun - funCut), funCut, xeonWarning: false, cgtCost: 0,
+      tone: "warn",
     };
   }
+
+  // Full shortfall — cascade
+  const xeonBal  = state.bucketXEON        || 0;
+  const bondsBal = state.bucketFixedIncome || 0;
+  const cashBal  = state.bucketCash        || 0;
+
+  let drawKey, drawSource, drawSourceLabel, drawSourceInst, drawMeta;
+  let xeonWarning = false;
+  if (cashBal >= drawNeeded) {
+    drawKey = "cash"; drawSource = "cash"; drawSourceLabel = "Cash"; drawSourceInst = "EUR cash";
+    drawMeta = BUCKET_META.cash;
+  } else if (xeonBal > 0) {
+    drawKey = "fortress"; drawSource = "fortress"; drawSourceLabel = "Safety"; drawSourceInst = "XEON";
+    drawMeta = BUCKET_META.fortress;
+    if (xeonBal < drawNeeded * 2) xeonWarning = true;
+  } else if (bondsBal > 0) {
+    drawKey = "termShield"; drawSource = "termShield"; drawSourceLabel = "Stability"; drawSourceInst = "Bonds";
+    drawMeta = BUCKET_META.termShield;
+  } else {
+    drawKey = "growth"; drawSource = "growth"; drawSourceLabel = "Growth (last resort)"; drawSourceInst = "VWCE";
+    drawMeta = BUCKET_META.growth;
+  }
+
+  const cgtRate = (state.bgCgtRatePct || 10) / 100;
+  const gainsFraction = 0.5;
+  const cgtCost = drawSource === "growth" ? Math.round(drawNeeded * gainsFraction * cgtRate) : 0;
+
+  const secondary = [];
+  if (funCut > 0) {
+    secondary.push({ type: "fun_trim", funCutEur: Math.round(funCut), funBefore: cf.fun, funAfter: cf.fun - funCut });
+  }
+  if (xeonWarning) {
+    secondary.push({ type: "xeon_low", currentXeon: xeonBal, drawNeeded: Math.round(drawNeeded), monthsLeft: monthsOf(xeonBal) });
+  }
+  if (cgtCost > 0) {
+    secondary.push({ type: "cgt", costEur: cgtCost, ratePct: (state.bgCgtRatePct || 10) });
+  }
+  const ow = buildOverweightSecondary();
+  if (ow) secondary.push(ow);
+
+  return {
+    mode: "shortfall",
+    cf, portfolio, fireTarget, zone, wr,
+    primary: {
+      verb: "Withdraw", amount: Math.round(drawNeeded),
+      bucketKey: drawKey, meta: drawMeta,
+      reason: {
+        type: "cascade",
+        source: drawSource,
+        cashBal, xeonBal, bondsBal,
+        funCutEur: Math.round(funCut),
+        afterBalance: (drawSource === "cash" ? cashBal : drawSource === "fortress" ? xeonBal : drawSource === "termShield" ? bondsBal : 0) - drawNeeded,
+      },
+    },
+    secondary,
+    floorContext: null,
+    headline: `Withdraw ${fmtEur(drawNeeded)} from ${drawSourceLabel} (${drawSourceInst})`,
+    subtitle: `WR ${wr.toFixed(2)}% — ${zone.label}.`,
+    // Back-compat
+    drawNeeded, drawSource, drawSourceLabel, drawSourceInst,
+    shortfall, funKept: Math.max(0, cf.fun - funCut), funCut, xeonWarning, cgtCost,
+    tone: drawSource === "growth" ? "bad" : "warn",
+  };
+}
+
+// Back-compat alias — keep `monthlyRecommendation` exported with the same flat shape
+// (mode === "surplus" was the legacy name for accumulating; map it back here).
+function monthlyRecommendation(state) {
+  const o = monthlyOutlook(state);
+  const mode = o.mode === "accumulating" ? "surplus" : "shortfall";
+  return { ...o, mode };
 }
 
 // ─── Trigger evaluation ───
@@ -744,7 +920,8 @@ Object.assign(window, {
   fmtEur, fmtEurK, fmtPct, getGKZone,
   calcGKNextStep, runGKSimulation, runMonteCarlo,
   sampleCorrelatedPaths, sampleReturnPath, sampleInflationPath, gaussianSample,
-  deriveCashflow, nextRebalanceBucket, monthlyRecommendation, effectiveFloor,
+  deriveCashflow, nextRebalanceBucket, monthlyRecommendation, monthlyOutlook,
+  effectiveFloor, effectiveLastWithdrawal,
   evaluateTriggers, monthsToTarget,
   loadState, saveState, loadFromGist, saveToGist, GIST_FILENAME,
 });
