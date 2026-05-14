@@ -113,6 +113,232 @@ function AllocationDonut({ slices, total, size = 140, stroke = 18 }) {
   );
 }
 
+// ─── This Month card ─────────────────────────────────────────────────────
+// Renders the structured `monthlyOutlook` payload. Three layouts share a frame:
+// - Accumulating: green mode pill, "Invest …" primary block, floor tracker when
+//   the recommendation is floor-driven.
+// - Lean drawdown: amber mode pill, "Trim fun …" primary block.
+// - Shortfall: amber/red pill with WR zone, "Withdraw …" primary block.
+function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
+  const cf = outlook.cf;
+  const p = outlook.primary;
+  const reason = p.reason || {};
+
+  const modePill = outlook.mode === "accumulating"
+    ? { tone: "good", label: "Accumulating" }
+    : outlook.mode === "lean_drawdown"
+      ? { tone: "warn", label: "Drawdown" }
+      : { tone: "bad",  label: "Drawdown" };
+
+  // Cashflow chip color helpers
+  const chipBase = {
+    padding: "6px 10px", borderRadius: 999, fontSize: 12,
+    fontFamily: "var(--font-mono)", fontWeight: 600,
+    border: "1px solid var(--hairline)", background: "var(--surface-2)",
+    whiteSpace: "nowrap",
+  };
+  const surplusPositive = cf.surplusMonthly >= 0;
+  const surplusChip = {
+    ...chipBase,
+    color: surplusPositive ? "var(--good)" : "var(--bad)",
+    borderColor: surplusPositive ? "rgba(108,212,154,0.35)" : "rgba(239,115,115,0.35)",
+    background: surplusPositive ? "var(--good-soft)" : "var(--warn-soft)",
+    fontWeight: 700,
+  };
+
+  // Primary action accent color (uses bucket color when there is a bucket)
+  const accentColor = p.meta?.color || "var(--warn)";
+  const accentRaw   = p.meta?.raw   || "var(--warn)";
+
+  // Floor-mode rationale string
+  const floorRationale = (reason.type === "floor" && p.bucketKey === "fortress")
+    ? `Floor ${fmtEur(reason.floorEur)} = ${reason.floorMonths} months of expenses. You're at ${fmtEur(cf.totalExpenses > 0 ? Math.round(outlook.floorContext.current) : 0)} — ${fmtEur(reason.gap)} short. Floor takes priority over the ${reason.targetPct}% target.`
+    : (reason.type === "floor"
+        ? `Floor ${fmtEur(reason.floorEur)} = ${reason.floorMonths} months of expenses. ${fmtEur(reason.gap)} short. Floor takes priority over the ${reason.targetPct}% target.`
+        : null);
+
+  const targetRationale = reason.type === "target"
+    ? (reason.gap > 0
+        ? `Underweight: ${reason.gap > 0 ? fmtEur(reason.gap) : ""} below the ${reason.targetPct}% target (range ${reason.rangeLowerPct}–${reason.rangeUpperPct}%).`
+        : `All buckets in range. Direct surplus to ${p.meta.label} to keep momentum.`)
+    : null;
+
+  const cascadeRationale = reason.type === "cascade"
+    ? (reason.source === "cash" ? `Cash covers it — no sell, no tax.`
+        : reason.source === "fortress" ? `Cash exhausted. Safety (XEON) is next per draw order — stable value, no CGT.`
+        : reason.source === "termShield" ? `Cash and Safety drained. Drawing from Stability (Bonds).`
+        : `Last resort — selling Growth (VWCE) means realizing gains and pausing compounding.`)
+    : null;
+
+  const funCoversRationale = reason.type === "fun_covers"
+    ? `Cut fun from ${fmtEur(reason.funBefore)} to ${fmtEur(reason.funAfter)}. Cover the shortfall from this month's discretionary budget — no portfolio sale required.`
+    : null;
+
+  const afterLine = (() => {
+    if (outlook.mode === "accumulating" && p.amount > 0 && p.meta) {
+      const after = reason.afterBalance ?? (reason.afterBalance);
+      const afterMo = reason.afterMonths || 0;
+      if (p.bucketKey === "fortress" && afterMo > 0) {
+        return `After: ${p.meta.label} at ${fmtEur(after)} → ${afterMo.toFixed(1)} months of runway covered.`;
+      }
+      return `After: ${p.meta.label} balance ${fmtEur(after)}.`;
+    }
+    if (outlook.mode === "shortfall" && p.amount > 0 && p.meta && reason.source !== "growth") {
+      const after = Math.max(0, reason.afterBalance);
+      const afterMo = monthsOf(after);
+      return `After: ${p.meta.label} balance ${fmtEur(after)} → ${afterMo.toFixed(1)} months remaining.`;
+    }
+    return null;
+  })();
+
+  // ─── Render ─────────────────────────────────────────────────────────
+  return (
+    <Card padding={isMobile ? 20 : 24}>
+      {/* Header row: eyebrow + mode pill aligned right */}
+      <Row justify="space-between" align="flex-start" gap={12} style={{ marginBottom: 14 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 11, color: "var(--fg-soft)", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, marginBottom: 6 }}>
+            This month
+          </div>
+          <div style={{ fontSize: isMobile ? 20 : 22, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", lineHeight: 1.25 }}>
+            {outlook.headline}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--fg-mute)", marginTop: 6, lineHeight: 1.5 }}>
+            {outlook.subtitle}
+          </div>
+        </div>
+        <Pill tone={modePill.tone} size="sm">{modePill.label}</Pill>
+      </Row>
+
+      {/* Cashflow strip — inline chips */}
+      <Row gap={8} wrap style={{ marginBottom: 16 }}>
+        <span style={{ ...chipBase, color: "var(--good)" }}>Income +{fmtEur(cf.incomeMonthly)}</span>
+        <span style={chipBase}>Essentials −{fmtEur(cf.essentials)}</span>
+        <span style={chipBase}>Fun −{fmtEur(cf.fun)}</span>
+        <span style={surplusChip}>
+          {surplusPositive ? "Surplus +" : "Shortfall −"}{fmtEur(Math.abs(cf.surplusMonthly))}
+        </span>
+      </Row>
+
+      {/* Primary action block */}
+      <div style={{
+        borderLeft: `4px solid ${accentColor}`,
+        background: "var(--surface-2)",
+        borderRadius: 10,
+        padding: "14px 16px",
+        marginBottom: outlook.floorContext || outlook.secondary.length > 0 ? 12 : 0,
+      }}>
+        <Row gap={8} align="baseline" wrap>
+          <span style={{ fontSize: 11, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>
+            Action
+          </span>
+        </Row>
+        <div style={{ marginTop: 6, fontSize: isMobile ? 17 : 19, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.01em", lineHeight: 1.35 }}>
+          <span style={{ color: accentColor === "var(--warn)" || outlook.mode === "shortfall" ? "var(--warn)" : "var(--good)" }}>
+            {p.verb}{" "}
+          </span>
+          <span style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(p.amount)}</span>
+          {p.meta && (
+            <>
+              {" "}
+              <span style={{ color: "var(--fg-mute)", fontWeight: 500 }}>
+                {p.verb === "Invest" ? "into" : "from"}
+              </span>{" "}
+              <span>{p.meta.label}</span>
+              <span style={{ color: "var(--fg-soft)", fontWeight: 500, fontSize: isMobile ? 14 : 16 }}> ({p.meta.inst})</span>
+            </>
+          )}
+        </div>
+        {(floorRationale || targetRationale || cascadeRationale || funCoversRationale) && (
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.6 }}>
+            <span style={{ color: "var(--fg-soft)", fontWeight: 600 }}>Why: </span>
+            {floorRationale || targetRationale || cascadeRationale || funCoversRationale}
+          </div>
+        )}
+        {afterLine && (
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.6 }}>
+            <span style={{ color: "var(--fg-soft)", fontWeight: 600 }}>After: </span>
+            {afterLine.replace(/^After:\s*/, "")}
+          </div>
+        )}
+      </div>
+
+      {/* Floor tracker — only when the primary action is floor-driven */}
+      {outlook.floorContext && (() => {
+        const fc = outlook.floorContext;
+        const pct = fc.floor > 0 ? Math.min(1, fc.current / fc.floor) : 0;
+        return (
+          <div style={{ marginBottom: outlook.secondary.length > 0 ? 12 : 0, padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10, border: "1px solid var(--hairline)" }}>
+            <Row justify="space-between" align="baseline" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+                {fc.meta.label} floor
+              </span>
+              <span style={{ fontSize: 12, color: "var(--fg-mute)", fontFamily: "var(--font-mono)" }}>
+                {(pct * 100).toFixed(0)}%
+              </span>
+            </Row>
+            <div style={{ position: "relative", height: 6, background: "var(--surface-3)", borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct * 100}%`, background: fc.meta.raw, transition: "width 500ms ease" }} />
+            </div>
+            <Row justify="space-between" style={{ marginTop: 6 }}>
+              <span style={{ fontSize: 11, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+                {fmtEur(fc.current)} / {fmtEur(fc.floor)}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+                {fc.currentMonths.toFixed(1)}mo / {fc.months}mo
+              </span>
+            </Row>
+          </div>
+        );
+      })()}
+
+      {/* Secondary actions */}
+      {outlook.secondary.length > 0 && (
+        <Stack gap={8}>
+          {outlook.secondary.map((s, i) => {
+            if (s.type === "rebalance_out") {
+              return (
+                <div key={i} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 8, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55, borderLeft: "3px solid var(--warn)" }}>
+                  <Row gap={8} align="baseline" wrap>
+                    <span style={{ color: "var(--warn)", fontWeight: 600 }}>↻ Rebalance:</span>
+                    <span>
+                      <strong style={{ color: "var(--fg)" }}>{s.fromMeta.label}</strong> ({s.fromMeta.inst}) is{" "}
+                      <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(s.excessEur)}</strong> above its {s.rangeUpperPct}% range cap. Consider trimming into <strong style={{ color: "var(--fg)" }}>{s.toMeta.label}</strong> at your next rebalance.
+                    </span>
+                  </Row>
+                </div>
+              );
+            }
+            if (s.type === "fun_trim") {
+              return (
+                <div key={i} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 8, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55, borderLeft: "3px solid var(--fg-soft)" }}>
+                  <span style={{ color: "var(--fg-soft)", fontWeight: 600 }}>● Trim fun first: </span>
+                  Reduce fun by <strong style={{ fontFamily: "var(--font-mono)", color: "var(--fg)" }}>{fmtEur(s.funCutEur)}</strong> ({fmtEur(s.funBefore)} → {fmtEur(s.funAfter)}) to shrink the draw.
+                </div>
+              );
+            }
+            if (s.type === "xeon_low") {
+              return (
+                <div key={i} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 8, fontSize: 12, color: "var(--warn)", lineHeight: 1.55, borderLeft: "3px solid var(--warn)" }}>
+                  ⚠ <strong>Safety (XEON) is running low</strong> — about {s.monthsLeft.toFixed(1)} months left at this draw rate. Plan to refill from Stability (Bonds) soon.
+                </div>
+              );
+            }
+            if (s.type === "cgt") {
+              return (
+                <div key={i} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 8, fontSize: 12, color: "var(--bad)", lineHeight: 1.55, borderLeft: "3px solid var(--bad)" }}>
+                  € <strong>CGT estimate:</strong> ~{fmtEur(s.costEur)} on a VWCE sale (50% gain assumption, {s.ratePct}% rate).
+                </div>
+              );
+            }
+            return null;
+          })}
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
 function TodayView({ state, setState }) {
   const { isMobile } = useViewport();
   const cf = deriveCashflow(state);
@@ -137,9 +363,7 @@ function TodayView({ state, setState }) {
         : Math.log((fireTarget * _rMonthly + cf.surplusMonthly) / (portfolio * _rMonthly + cf.surplusMonthly)) / Math.log(1 + _rMonthly))
     : (fireGap === 0 ? 0 : Infinity);
 
-  const lastWithdrawal = (state.gkHistory && state.gkHistory.length > 0)
-    ? state.gkHistory[state.gkHistory.length - 1].finalWithdrawal
-    : cf.annualExpenses;
+  const lastWithdrawal = effectiveLastWithdrawal(state);
   const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
 
   const slices = [
@@ -149,7 +373,8 @@ function TodayView({ state, setState }) {
     { key: "cash",       value: state.bucketCash,         color: "var(--b-cash)",     label: "Cash",      sub: "EUR" },
   ];
 
-  const rec = monthlyRecommendation(state);
+  const outlook = monthlyOutlook(state);
+  const monthsOf = (eur) => cf.totalExpenses > 0 ? eur / cf.totalExpenses : 0;
 
   // FIRE milestones — multiple withdrawal-rate scenarios
   // Geometric 12th-root gives the exact effective monthly rate: (1+r_annual)^(1/12)−1.
@@ -254,10 +479,15 @@ function TodayView({ state, setState }) {
         </Row>
       </Card>
 
-      {/* GK zone */}
-      <Card padding={isMobile ? 20 : 24}>
-        <GKZoneRibbon wr={wr} isMobile={isMobile} />
-      </Card>
+      {/* This month — moved up. Render here so it sits directly under the hero. */}
+      <ThisMonthCard outlook={outlook} state={state} isMobile={isMobile} monthsOf={monthsOf} />
+
+      {/* GK zone — hidden while accumulating (WR is not meaningful with no draws). */}
+      {outlook.mode !== "accumulating" && (
+        <Card padding={isMobile ? 20 : 24}>
+          <GKZoneRibbon wr={wr} isMobile={isMobile} />
+        </Card>
+      )}
 
       {/* FIRE milestones — read-only, multi-scenario */}
       <Card padding={isMobile ? 20 : 24}>
@@ -334,95 +564,6 @@ function TodayView({ state, setState }) {
               </>
             )}
           </div>
-        </div>
-      </Card>
-
-      {/* This month — recommendation engine */}
-      <Card padding={isMobile ? 20 : 24}>
-        <SectionHeader
-          eyebrow="This month"
-          title={rec.headline}
-          subtitle={rec.mode === "surplus"
-            ? "Direct your surplus where it's needed most. Then update bucket balances in Plan."
-            : "Income falls short. Cover what you can from the fun budget; draw the rest from Safety."}
-        />
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
-          {/* Cashflow side */}
-          <Stack gap={10} style={{ padding: 16, background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--hairline)" }}>
-            <Row justify="space-between">
-              <span style={{ fontSize: 12, color: "var(--fg-soft)" }}>Income</span>
-              <span style={{ fontSize: 14, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--good)" }}>+{fmtEur(cf.incomeMonthly)}</span>
-            </Row>
-            <Row justify="space-between">
-              <span style={{ fontSize: 12, color: "var(--fg-soft)" }}>Essentials</span>
-              <span style={{ fontSize: 14, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--fg-mute)" }}>−{fmtEur(cf.essentials)}</span>
-            </Row>
-            <Row justify="space-between">
-              <span style={{ fontSize: 12, color: "var(--fg-soft)" }}>Fun budget</span>
-              <span style={{ fontSize: 14, fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--fg-mute)" }}>−{fmtEur(cf.fun)}</span>
-            </Row>
-            <div style={{ borderTop: "1px solid var(--hairline)", paddingTop: 10 }}>
-              <Row justify="space-between" align="baseline">
-                <span style={{ fontSize: 12, color: "var(--fg-mute)", fontWeight: 600 }}>{cf.surplusMonthly >= 0 ? "Surplus" : "Shortfall"}</span>
-                <span style={{ fontSize: 22, fontWeight: 700, color: cf.surplusMonthly >= 0 ? "var(--good)" : "var(--bad)", fontFamily: "var(--font-mono)" }}>
-                  {cf.surplusMonthly >= 0 ? "+" : "−"}{fmtEur(Math.abs(cf.surplusMonthly))}
-                </span>
-              </Row>
-            </div>
-          </Stack>
-
-          {/* Action side */}
-          <Stack gap={10} style={{ padding: 16, background: rec.mode === "surplus" ? "var(--good-soft)" : "var(--warn-soft)", borderRadius: 12, border: `1px solid ${rec.mode === "surplus" ? "rgba(108,212,154,0.30)" : "rgba(245,184,107,0.30)"}` }}>
-            {rec.mode === "surplus" ? (
-              <>
-                <Row gap={10} align="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 3, background: rec.need.meta.color, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Action</span>
-                </Row>
-                <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
-                  Transfer <strong style={{ fontFamily: "var(--font-mono)", color: "var(--good)" }}>{fmtEur(rec.transfer)}</strong> to <strong>{rec.need.meta.label}</strong> ({rec.need.meta.inst}) — {rec.need.reason === "floor"
-                    ? <>{fmtEur(rec.need.gap)} below floor</>
-                    : <>{fmtEur(rec.need.gap)} below target allocation</>}.
-                </div>
-                <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>
-                  Spend freely up to <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funKept)}</strong> on the fun budget
-                  {rec.funCut > 0 && <> ({fmtEur(rec.funCut)} held back due to <strong>{rec.zone.label}</strong> zone)</>}.
-                </div>
-              </>
-            ) : (
-              <>
-                <Row gap={10} align="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 3, background: "var(--warn)", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Action</span>
-                </Row>
-                {rec.drawNeeded > 0 ? (
-                  <>
-                    <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
-                      Withdraw <strong style={{ fontFamily: "var(--font-mono)", color: rec.drawSource === "growth" ? "var(--bad)" : "var(--warn)" }}>{fmtEur(rec.drawNeeded)}</strong> from <strong>{rec.drawSourceLabel}</strong> ({rec.drawSourceInst}).
-                      {rec.funCut > 0 && <> Trim fun by <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funCut)}</strong> first.</>}
-                    </div>
-                    {rec.xeonWarning && (
-                      <div style={{ fontSize: 12, color: "var(--warn)", lineHeight: 1.55 }}>
-                        ⚠ Safety (XEON) is running low — plan to refill from Stability (Bonds) soon.
-                      </div>
-                    )}
-                    {rec.cgtCost > 0 && (
-                      <div style={{ fontSize: 12, color: "var(--bad)", lineHeight: 1.55 }}>
-                        Estimated CGT on VWCE draw: ~{fmtEur(rec.cgtCost)} (50% gain assumption, {state.bgCgtRatePct || 10}% rate).
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.55 }}>
-                    Trim fun budget by <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(rec.funCut)}</strong> — you can cover this month without selling.
-                  </div>
-                )}
-                <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>
-                  WR zone: <strong>{rec.zone.label}</strong>.{rec.drawSource !== "growth" && " Do not touch Growth (VWCE)."}
-                </div>
-              </>
-            )}
-          </Stack>
         </div>
       </Card>
 

@@ -69,8 +69,10 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 **Cashflow helpers:**
 - `deriveCashflow(state)` — derives `{ primarySalary, partnerSalary, incomeMonthly, essentials, fun, totalExpenses, surplusMonthly, surplusAnnual, annualExpenses, phase }` from state.
 - `effectiveFloor(bucketCfg, monthlyTotal)` — `max(staticFloor, floorMonths × monthlyTotal)`.
-- `nextRebalanceBucket(state)` — returns the most underfunded bucket (floor gap takes priority over target gap).
-- `monthlyRecommendation(state)` — full surplus/shortfall recommendation with draw-source cascade (Cash → XEON → Bonds → VWCE) and GK-zone-aware fun-budget holdbacks.
+- `effectiveLastWithdrawal(state)` — returns the most recent `gkHistory.finalWithdrawal` if available; otherwise `0` when accumulating (surplus ≥ 0) and `annualExpenses` only when actively drawing. Replaces the older "always default to `annualExpenses`" fallback, which produced a phantom Cut-zone WR while employed.
+- `nextRebalanceBucket(state)` — returns `{ underweight, overweight }`. `underweight` is the most pressing bucket to add money to (floor deficit > %-allocation deficit), with `floor`, `floorMonths`, `targetPct`, and `range` fields so the UI can explain the choice. `overweight` is the most-overweight bucket beyond its range upper (with a 0.5%-of-portfolio noise tolerance), or `null`.
+- `monthlyOutlook(state)` — structured monthly plan with three modes: `"accumulating"` (surplus ≥ 0 and either no GK history or still in an earning phase — `employed` / `coast_fire` / `barista_fire`), `"lean_drawdown"` (small shortfall fully covered by trimming fun), `"shortfall"` (draw required, with cascade source Cash → XEON → Bonds → VWCE). Returns `{ mode, primary: { verb, amount, bucketKey, meta, reason }, secondary: [...], floorContext, headline, subtitle, ... }`. In `accumulating` mode, `funCut` is always 0 (the prior zone-based fun-budget holdback was wrong for employed users not drawing from the portfolio). Secondary actions include `rebalance_out` (flag overweight buckets), `fun_trim`, `xeon_low`, `cgt`.
+- `monthlyRecommendation(state)` — thin alias for `monthlyOutlook` kept for back-compat; remaps `mode: "accumulating"` to `"surplus"`.
 
 **Storage / Sync:**
 - `loadState()` / `saveState(state)` — `localStorage` keyed at `"harari-dashboard-state"`. Save is debounced 250ms via `usePersistedState` hook (not synchronous).
@@ -88,13 +90,20 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 
 ### Tabs
 
-**Today** (`today.js`) — read-only situational awareness.
-- Hero: portfolio total + FIRE progress ring vs. `annualExpenses / GK_CONFIG.IWR`.
-- GK zone ribbon: current WR plotted against static 3.2% / 4.0% / 4.8% display markers (these are informational labels for the canonical 4% IWR framework; simulation uses dynamic guardrails).
-- FIRE milestones: 4 IWR tiers (Lean 4.5% vs essentials-only, Aggressive 4%, Recommended 3.5%, Bulletproof 3%) — each shows target portfolio, progress bar, months/ETA. Lean FIRE shows a caution note about zero spending elasticity for GK cuts.
-- Monthly recommendation: surplus → bucket to invest in; shortfall → bucket to draw from.
-- Runway card: Safety + Cash months.
-- Decision triggers: filtered subset of `TRIGGERS` relevant to current state.
+**Today** (`today.js`) — read-only situational awareness. Section order (top to bottom):
+1. **Hero** — portfolio total + FIRE progress ring vs. `annualExpenses / GK_CONFIG.IWR`.
+2. **This Month** (`ThisMonthCard` component) — the hero short-term action card. Renders `monthlyOutlook(state)`:
+   - Mode pill top-right: green "Accumulating" / amber "Drawdown" (lean) / red "Drawdown" (full shortfall).
+   - Cashflow chip strip (Income / Essentials / Fun / Surplus-or-Shortfall).
+   - Primary action block with bucket-color left border: bold "Invest €X into Safety (XEON)" / "Withdraw €X from …" / "Trim fun by €X", followed by **Why:** (floor explainer with €/months, or target-allocation gap, or cascade rationale) and **After:** (post-action balance and months-of-runway when applicable).
+   - **Floor tracker** (mini progress bar) — only shown when `outlook.floorContext` is present (i.e. the primary action is floor-driven). Displays €current / €floor and `currentMonths / floorMonths`.
+   - Secondary action rows: overweight rebalance tip (`rebalance_out`), fun-trim suggestion (`fun_trim`), XEON-low warning (`xeon_low`), CGT estimate (`cgt`).
+3. **GK zone ribbon** — **only rendered when `outlook.mode !== "accumulating"`** (otherwise the WR is meaningless). When shown: current WR plotted against static 3.2% / 4.0% / 4.8% display markers (informational labels for the canonical 4% IWR framework; simulation uses dynamic guardrails).
+4. **FIRE milestones** — 4 IWR tiers (Lean 4.5% vs essentials-only, Aggressive 4%, Recommended 3.5%, Bulletproof 3%) — each shows target portfolio, progress bar, months/ETA. Lean FIRE shows a caution note about zero spending elasticity for GK cuts.
+5. **Runway + Allocation** two-up — Safety + Cash months; donut + drift list.
+6. **Decision triggers** — filtered subset of `TRIGGERS` relevant to current state.
+
+`ThisMonthCard` lives in `today.js` next to `TodayView`. WR is computed via `effectiveLastWithdrawal(state)` so accumulating users see WR = 0 (not a phantom forecast).
 
 `monthsToTarget(portfolio, target, monthlySurplus, realReturnMonthly)` — standalone pure function in `engine.js` (exported to `window`). Uses the closed-form FV formula `n = ln((F·r + c) / (P·r + c)) / ln(1+r)` with **geometric monthly rate** `r = (1 + realReturn)^(1/12) − 1` (not nominal `r/12`). Guards negative denominators to return `Infinity`. Used by both Today and Freedom tabs.
 
@@ -240,7 +249,8 @@ Open in browser. `engine.js` exposes `window.__FIRE_TESTS__` with `{ calcGKNextS
 - **FIRE targets** are derived from `annualExpenses` (never hardcoded): `annualExpenses / iwr` for each tier.
 - **Lean FIRE** (labelled "Lean Independence" in UI, phase ID remains `lean_fire`) uses `essentials × 12 / 0.045` (not full expenses) — it's the minimum threshold, not a recommendation. A GK 10% cut at this tier drops below essential spending; the UI shows a caution note.
 - **Tax**: Bulgarian UCITS ETF gains are CGT-exempt (Art. 13 ZDDFL). Draw order (Cash → XEON → Bonds → VWCE) is optimal under this exemption — there's no tax-loss harvesting value at 0% CGT.
-- **Draw cascade** in `monthlyRecommendation`: Cash first (no tax, no sequence risk), then XEON (stable value), then Bonds, then VWCE last (growth, never sell in drawdowns).
+- **Draw cascade** in `monthlyOutlook` (shortfall mode): Cash first (no tax, no sequence risk), then XEON (stable value), then Bonds, then VWCE last (growth, never sell in drawdowns).
+- **Accumulating vs. drawing**: while `currentPhase ∈ {employed, coast_fire, barista_fire}` with positive surplus, `monthlyOutlook` returns `mode: "accumulating"` and the Today tab hides the GK zone ribbon and skips any fun-budget holdback. WR is only meaningful while actually drawing.
 - No external state management — React `useState` + localStorage only.
 - Inline styles throughout (no CSS classes beyond a few in `index.html`).
 - Mobile-first responsive: `isMobile` breakpoint at 760px (`useViewport`).
