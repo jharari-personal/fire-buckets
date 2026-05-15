@@ -24,6 +24,10 @@ The app is split across several `<script type="text/babel">` files loaded in ord
 
 Load order in `index.html`: `engine.js` → `ui.js` → `today.js` → `plan.js` → `freedom.js` → `stress.js` → `history.js` → `script.js`.
 
+## Keeping CLAUDE.md current
+
+**After every task, update this file** to reflect any changes made — new components, renamed variables, changed section layouts, new conventions, removed items. Do not leave CLAUDE.md stale. If a section no longer matches the code, fix it before ending the turn.
+
 ## Deployment
 
 Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so static files are served as-is.
@@ -91,7 +95,7 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 ### Tabs
 
 **Today** (`today.js`) — read-only situational awareness. Section order (top to bottom):
-1. **Hero** — portfolio total + FIRE progress ring vs. `annualExpenses / GK_CONFIG.IWR`.
+1. **Hero** — FIRE progress ring (% of target), portfolio total, gap-to-FIRE and years-at-current-pace, plus two stat chips (FIRE target, Annual cost). Below the main row: a 3-card **independence snapshot** (same pattern as Freedom's exit snapshot) showing: (a) safe monthly income at 4% IWR (`portfolio × IWR / 12`), (b) essentials coverage % with gap, (c) full lifestyle coverage % with gap. Cards are color-coded: accent border for safe income, good/warn for essentials, good/warn/bad for lifestyle.
 2. **This Month** (`ThisMonthCard` component) — the hero short-term action card. Renders `monthlyOutlook(state)`:
    - Mode pill top-right: green "Accumulating" / amber "Drawdown" (lean) / red "Drawdown" (full shortfall).
    - Cashflow chip strip (Income / Essentials / Fun / Surplus-or-Shortfall).

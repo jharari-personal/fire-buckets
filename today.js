@@ -366,6 +366,11 @@ function TodayView({ state, setState }) {
   const lastWithdrawal = effectiveLastWithdrawal(state);
   const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
 
+  const safeMonthly = portfolio * GK_CONFIG.IWR / 12;
+  const heroMonthlyExpenses = cf.essentials + cf.fun;
+  const heroEssCoverage = cf.essentials > 0 ? (safeMonthly / cf.essentials) * 100 : 0;
+  const heroLifeCoverage = heroMonthlyExpenses > 0 ? (safeMonthly / heroMonthlyExpenses) * 100 : 0;
+
   const slices = [
     { key: "growth",     value: state.bucketVWCE,         color: "var(--b-growth)",   label: "Growth",    sub: "VWCE" },
     { key: "fortress",   value: state.bucketXEON,         color: "var(--b-fortress)", label: "Safety",    sub: "XEON" },
@@ -467,16 +472,54 @@ function TodayView({ state, setState }) {
                 <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{fmtEur(fireTarget)}</div>
               </div>
               <div>
-                <div style={{ fontSize: 10, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Progress</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{(progress * 100).toFixed(1)}%</div>
-              </div>
-              <div>
                 <div style={{ fontSize: 10, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Annual cost</div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{fmtEur(cf.annualExpenses)}</div>
               </div>
             </Row>
           </div>
         </Row>
+        {/* Independence snapshot — what the portfolio safely covers right now */}
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
+          <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: "3px solid var(--accent)" }}>
+            <div style={{ fontSize: 11, color: "var(--fg-soft)", marginBottom: 4 }}>Portfolio safely provides</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>{fmtEur(safeMonthly)}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}>/mo</span></div>
+            <div style={{ fontSize: 10, color: "var(--fg-soft)", marginTop: 4 }}>at {fmtPct(GK_CONFIG.IWR * 100, 0)} initial WR</div>
+          </div>
+          {(() => {
+            const essGap = Math.max(0, cf.essentials - safeMonthly);
+            const essColor = heroEssCoverage >= 100 ? "var(--good)" : "var(--warn)";
+            return (
+              <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: `3px solid ${essColor}` }}>
+                <Row justify="space-between" align="baseline">
+                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Essentials</div>
+                  <Pill tone={heroEssCoverage >= 100 ? "good" : "warn"} size="xs">{heroEssCoverage.toFixed(0)}%</Pill>
+                </Row>
+                <div style={{ fontSize: 18, fontWeight: 700, color: essColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                  {fmtEur(Math.min(safeMonthly, cf.essentials))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(cf.essentials)}</span>
+                </div>
+                {essGap > 0 && <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 4 }}>Gap: {fmtEur(essGap)}/mo needs income</div>}
+                {essGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
+              </div>
+            );
+          })()}
+          {(() => {
+            const lifeGap = Math.max(0, heroMonthlyExpenses - safeMonthly);
+            const lifeColor = heroLifeCoverage >= 100 ? "var(--good)" : heroLifeCoverage >= 70 ? "var(--warn)" : "var(--bad)";
+            return (
+              <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: `3px solid ${lifeColor}` }}>
+                <Row justify="space-between" align="baseline">
+                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Full lifestyle</div>
+                  <Pill tone={heroLifeCoverage >= 100 ? "good" : heroLifeCoverage >= 70 ? "warn" : "bad"} size="xs">{heroLifeCoverage.toFixed(0)}%</Pill>
+                </Row>
+                <div style={{ fontSize: 18, fontWeight: 700, color: lifeColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                  {fmtEur(Math.min(safeMonthly, heroMonthlyExpenses))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(heroMonthlyExpenses)}</span>
+                </div>
+                {lifeGap > 0 && <div style={{ fontSize: 11, color: lifeColor, marginTop: 4 }}>Gap: {fmtEur(lifeGap)}/mo needs income</div>}
+                {lifeGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
+              </div>
+            );
+          })()}
+        </div>
       </Card>
 
       {/* This month — moved up. Render here so it sits directly under the hero. */}
