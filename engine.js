@@ -1,6 +1,6 @@
 // ─── Compass FIRE Planner — Engine (pure math, state shape preserved) ───
 
-const APP_VERSION = "20260514.0";
+const APP_VERSION = "20260515.0";
 
 const GK_CONFIG = {
   IWR: 0.04,
@@ -879,7 +879,8 @@ async function loadFromGist(token, gistId) {
   return JSON.parse(content);
 }
 async function saveToGist(token, gistId, state) {
-  const payload = { description: "Harari FIRE Dashboard State", files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } } };
+  const { cloudToken: _, ...cloudState } = state;
+  const payload = { description: "Harari FIRE Dashboard State", files: { [GIST_FILENAME]: { content: JSON.stringify(cloudState, null, 2) } } };
   if (gistId) {
     const resp = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
