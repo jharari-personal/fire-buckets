@@ -43,27 +43,28 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
   );
 }
 
-// ─── MilestoneJourney — horizontal SVG track inside the hero ─────────────
+// ─── MilestoneJourney — ribbon slider matching GKZoneRibbon's design ────────
 function MilestoneJourney({ portfolio, milestones, isMobile }) {
   const N = milestones.length; // 4
   const next = milestones.find(m => !m.reached);
 
-  // Evenly space dots so labels and dots align: dot i at (i+1)×(100/N) = 25,50,75,100
-  const sectionW = 100 / N;
-  const dotX = i => (i + 1) * sectionW;
+  // Milestone tick positions: 25%, 50%, 75%, 100%
+  const tickPct = i => (i + 1) / N;
 
-  // User pin: proportional within whichever section they're currently in
+  // User marker: section-interpolated so it sits correctly between two ticks
   const passedCount = milestones.filter(m => portfolio >= m.target).length;
-  let userPinX;
+  let pct;
   if (passedCount >= N) {
-    userPinX = 100;
+    pct = 1;
   } else {
-    const sectionStart = passedCount === 0 ? 0 : dotX(passedCount - 1);
-    const fromTarget  = passedCount === 0 ? 0 : milestones[passedCount - 1].target;
-    const toTarget    = milestones[passedCount].target;
+    const sectionStart = passedCount === 0 ? 0 : tickPct(passedCount - 1);
+    const fromTarget   = passedCount === 0 ? 0 : milestones[passedCount - 1].target;
+    const toTarget     = milestones[passedCount].target;
     const t = Math.max(0, Math.min(1, (portfolio - fromTarget) / (toTarget - fromTarget)));
-    userPinX = sectionStart + t * sectionW;
+    pct = sectionStart + t * (tickPct(passedCount) - sectionStart);
   }
+
+  const markerColor = next ? next.color : "var(--good)";
 
   return (
     <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
@@ -75,36 +76,47 @@ function MilestoneJourney({ portfolio, milestones, isMobile }) {
           <>All milestones reached. You're past Bulletproof FIRE.</>
         )}
       </div>
-      <svg viewBox="0 0 100 14" width="100%" height={isMobile ? 36 : 40} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
-        <line x1="0" y1="7" x2="100" y2="7" stroke="var(--surface-3)" strokeWidth="2" strokeLinecap="round" />
-        <line x1="0" y1="7" x2={userPinX} y2="7" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+
+      {/* Track — same structure as GKZoneRibbon */}
+      <div style={{ position: "relative", height: 10, borderRadius: 999, background: "var(--surface-3)", overflow: "visible" }}>
+        {/* One coloured band per milestone section */}
         {milestones.map((m, i) => {
-          const x = dotX(i);
-          const reached = portfolio >= m.target;
+          const left  = i === 0 ? 0 : tickPct(i - 1) * 100;
+          const right = (1 - tickPct(i)) * 100;
           return (
-            <g key={m.id}>
-              <circle cx={x} cy="7" r={reached ? 3.2 : 2.4}
-                fill={reached ? m.color : "var(--surface-1)"}
-                stroke={m.color} strokeWidth={reached ? 0 : 1.2} />
-            </g>
+            <div key={m.id} style={{
+              position: "absolute",
+              left: `${left}%`, right: `${right}%`,
+              top: 0, bottom: 0,
+              background: m.color, opacity: 0.18,
+              borderTopLeftRadius:     i === 0     ? 999 : 0,
+              borderBottomLeftRadius:  i === 0     ? 999 : 0,
+              borderTopRightRadius:    i === N - 1 ? 999 : 0,
+              borderBottomRightRadius: i === N - 1 ? 999 : 0,
+            }} />
           );
         })}
-        <g>
-          <circle cx={userPinX} cy="7" r="5"
-            fill="var(--fg)" stroke="var(--accent)" strokeWidth="2"
-            style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}
-          />
-        </g>
-      </svg>
-      {/* Labels absolutely positioned to align with their dots */}
-      <div style={{ position: "relative", height: 20, marginTop: 8 }}>
+        {/* User marker */}
+        <div style={{
+          position: "absolute",
+          left: `${pct * 100}%`, top: -7,
+          width: 24, height: 24, borderRadius: "50%",
+          background: "var(--fg)",
+          border: `4px solid ${markerColor}`,
+          transform: "translateX(-50%)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.5), 0 0 0 2px var(--bg)",
+          transition: "left 400ms cubic-bezier(.2,.9,.3,1), border-color 400ms ease",
+        }} />
+      </div>
+
+      {/* Labels — absolutely positioned under each tick */}
+      <div style={{ position: "relative", marginTop: 10, height: 14 }}>
         {milestones.map((m, i) => {
-          const x = dotX(i);
           const isLast = i === N - 1;
           return (
             <span key={m.id} style={{
               position: "absolute",
-              left: `${x}%`,
+              left: `${tickPct(i) * 100}%`,
               transform: isLast ? "translateX(-100%)" : "translateX(-50%)",
               fontSize: 10,
               fontFamily: "var(--font-mono)",
