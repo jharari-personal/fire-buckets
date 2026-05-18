@@ -95,19 +95,21 @@ Push to `main` → auto-deploys to GitHub Pages. `.nojekyll` disables Jekyll so 
 ### Tabs
 
 **Today** (`today.js`) — read-only situational awareness. Section order (top to bottom):
-1. **Hero** — FIRE progress ring (% of target), portfolio total, gap-to-FIRE and years-at-current-pace, plus two stat chips (FIRE target, Annual cost). Below the main row: a 3-card **independence snapshot** (same pattern as Freedom's exit snapshot) showing: (a) safe monthly income at 4% IWR (`portfolio × IWR / 12`), (b) essentials coverage % with gap, (c) full lifestyle coverage % with gap. Cards are color-coded: accent border for safe income, good/warn for essentials, good/warn/bad for lifestyle.
-2. **This Month** (`ThisMonthCard` component) — the hero short-term action card. Renders `monthlyOutlook(state)`:
-   - Mode pill top-right: green "Accumulating" / amber "Drawdown" (lean) / red "Drawdown" (full shortfall).
-   - Cashflow chip strip (Income / Essentials / Fun / Surplus-or-Shortfall).
-   - Primary action block with bucket-color left border: bold "Invest €X into Safety (XEON)" / "Withdraw €X from …" / "Trim fun by €X", followed by **Why:** (floor explainer with €/months, or target-allocation gap, or cascade rationale) and **After:** (post-action balance and months-of-runway when applicable).
-   - **Floor tracker** (mini progress bar) — only shown when `outlook.floorContext` is present (i.e. the primary action is floor-driven). Displays €current / €floor and `currentMonths / floorMonths`.
-   - Secondary action rows: overweight rebalance tip (`rebalance_out`), fun-trim suggestion (`fun_trim`), XEON-low warning (`xeon_low`), CGT estimate (`cgt`).
-3. **GK zone ribbon** — **only rendered when `outlook.mode !== "accumulating"`** (otherwise the WR is meaningless). When shown: current WR plotted against static 3.2% / 4.0% / 4.8% display markers. WR marker is a white-fill circle with a colored ring (zone color). The rationale text shows **concrete euro amounts**: e.g. "Cut from €X → €Y (−10%)" or "Raise from €X → €Y (+10%)" — computed from `lastWithdrawal` with ±10% applied. `GKZoneRibbon` accepts `currentAnnual` and `proposedAnnual` props for this.
-4. **FIRE milestones** — 4 IWR tiers (Lean 4.5% vs essentials-only, Aggressive 4%, Recommended 3.5%, Bulletproof 3%) — each shows target portfolio, progress bar, months/ETA. Lean FIRE shows a caution note about zero spending elasticity for GK cuts.
-5. **Runway + Allocation** two-up — Safety + Cash months; donut + drift list. Drift bars show a **Pill badge** (`|drift| >= 1.5 pp`) with `+X.X pp` / `−X.X pp` and `warn` / `default` tone.
-6. **Decision triggers** — filtered subset of `TRIGGERS` relevant to current state. No eyebrow label.
+1. **Hero** — `ProgressRing` rebased to **Bulletproof FIRE as 100%** (not Aggressive), so the ring is a true journey map. Four milestone ticks drawn on the ring arc at their proportional positions. Portfolio total, gap-to-FIRE sentence (3-way branch: crossed / finite pace / no-surplus). `MilestoneJourney` SVG bar below the sentence: horizontal track with milestone dots + user pin + "Next milestone: X in Y" headline. No coverage cards in the hero.
+2. **GK zone ribbon** (`GKZoneRibbon`) — **only rendered when `outlook.mode !== "accumulating"`**, placed **directly under the hero** with `tone="accent"` for visual weight. WR marker is white-fill + colored ring. Rationale shows concrete €amounts. `currentAnnual` and `proposedAnnual` props.
+3. **Portfolio capacity today** (`PortfolioCapacityCard`) — safe monthly income shown big once (€/mo + €/yr at 4% IWR), then `CoverageBar` for Essentials and Full lifestyle (% + gap + inline progress bar). Tone-coded: good/warn/bad.
+4. **This Month** (`ThisMonthCard`) — action card. Mode pill top-right. Cashflow chip strip. Primary action block with bucket-color border, Why/After rationale. Floor tracker when floor-driven. Secondary rows: `rebalance_out`, `fun_trim`, `xeon_low`, `cgt`.
+5. **FIRE milestones** — compact `MilestoneRow` per tier (dot + name + WR badge + 80px mini-bar + months right-aligned). Lean FIRE caution shrunk to `⚠` tooltip (`title` attribute). "If contributions stopped tomorrow" footnote in a `Disclosure` (collapsed by default).
+6. **Runway + Allocation** two-up:
+   - **Runway**: `safeRunwayMonths` = (XEON + Cash + Bonds) / monthlyExpenses (all 3 defense buckets, not just Safety+Cash). `RunwayStackedBar` shows Cash / Safety / Stability segments proportional to months, with hatched Growth tail. Axis labels below. Chips removed.
+   - **Allocation**: donut + drift rows with `|drift| ≥ 1.5 pp` Pill badges. Rebalance hint appended when any bucket drifts ≥ 3 pp.
+7. **Decisions ahead** — sorted by urgency (`immediate > week > month > quarter`). Top 2 shown inline via `TriggerRow`. Remaining hidden in `Disclosure` ("Show N more"). `TriggerRow` is a module-level helper component.
+
+`fmtMonths(n)` and `fmtETA(n)` are **module-level** helpers (not inside `TodayView`) — shared by `MilestoneJourney`, `MilestoneRow`, and `TodayView`.
 
 `ThisMonthCard` lives in `today.js` next to `TodayView`. WR is computed via `effectiveLastWithdrawal(state)` so accumulating users see WR = 0 (not a phantom forecast).
+
+`ringProgress = portfolio / bulletproofTarget` drives the ring arc and label. `progress = portfolio / fireTarget` (Aggressive) drives the hero sentence logic only.
 
 `monthsToTarget(portfolio, target, monthlySurplus, realReturnMonthly)` — standalone pure function in `engine.js` (exported to `window`). Uses the closed-form FV formula `n = ln((F·r + c) / (P·r + c)) / ln(1+r)` with **geometric monthly rate** `r = (1 + realReturn)^(1/12) − 1` (not nominal `r/12`). Guards negative denominators to return `Infinity`. Used by both Today and Freedom tabs.
 
