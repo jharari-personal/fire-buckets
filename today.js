@@ -2,7 +2,25 @@
 // What it answers: "Where am I right now? What needs my attention?"
 // All edits live in Plan.
 
-function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accent)", label, sub }) {
+// ─── Module-level helpers (shared across components) ─────────────────────
+function fmtMonths(n) {
+  if (n === 0) return "Reached";
+  if (!Number.isFinite(n)) return "30+ yrs";
+  if (n < 12) return `${n} mo`;
+  const y = Math.floor(n / 12);
+  const mo = n % 12;
+  return mo === 0 ? `${y} yr${y > 1 ? "s" : ""}` : `${y}y ${mo}mo`;
+}
+
+function fmtETA(n) {
+  if (!Number.isFinite(n) || n === 0) return null;
+  const d = new Date();
+  d.setMonth(d.getMonth() + n);
+  return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+}
+
+// ─── ProgressRing ──────────────────────────────────────────────────────────
+function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accent)", label, sub, ticks }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const dash = c * Math.min(1, Math.max(0, value));
@@ -16,6 +34,19 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
           strokeDasharray={`${dash} ${c}`}
           style={{ transition: "stroke-dasharray 600ms cubic-bezier(.2,.9,.3,1)" }}
         />
+        {ticks && ticks.map((t, i) => {
+          const angle = t.position * 2 * Math.PI;
+          const x1 = size/2 + (r - stroke/2 - 2) * Math.cos(angle);
+          const y1 = size/2 + (r - stroke/2 - 2) * Math.sin(angle);
+          const x2 = size/2 + (r + stroke/2 + 2) * Math.cos(angle);
+          const y2 = size/2 + (r + stroke/2 + 2) * Math.sin(angle);
+          return (
+            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
+              stroke={t.reached ? t.color : "var(--fg-soft)"}
+              strokeWidth={t.reached ? 2.5 : 1.5}
+              strokeLinecap="round" />
+          );
+        })}
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 12 }}>
         <div style={{ fontSize: 26, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", fontFeatureSettings: '"tnum"' }}>{label}</div>
@@ -25,6 +56,212 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
   );
 }
 
+// ─── MilestoneJourney — horizontal SVG track inside the hero ─────────────
+function MilestoneJourney({ portfolio, milestones, isMobile }) {
+  const bullet = milestones.find(m => m.id === "bulletproof");
+  const max = bullet ? bullet.target : milestones[milestones.length - 1].target;
+  const userX = Math.min(1, portfolio / max);
+  const next = milestones.find(m => !m.reached);
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+      <div style={{ fontSize: 12, color: "var(--fg-soft)", marginBottom: 14, lineHeight: 1.5 }}>
+        {next ? (
+          <>Next milestone: <strong style={{ color: "var(--fg)" }}>{next.label}</strong> in{" "}
+          <strong style={{ color: next.color, fontFamily: "var(--font-mono)" }}>{fmtMonths(next.months)}</strong></>
+        ) : (
+          <>All milestones reached. You're past Bulletproof FIRE.</>
+        )}
+      </div>
+      <svg viewBox="0 0 100 14" width="100%" height={isMobile ? 36 : 40} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
+        <line x1="0" y1="7" x2="100" y2="7" stroke="var(--surface-3)" strokeWidth="2" strokeLinecap="round" />
+        <line x1="0" y1="7" x2={userX * 100} y2="7" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+        {milestones.map(m => {
+          const x = (m.target / max) * 100;
+          const reached = portfolio >= m.target;
+          return (
+            <g key={m.id}>
+              <circle cx={x} cy="7" r={reached ? 3.2 : 2.4}
+                fill={reached ? m.color : "var(--surface-1)"}
+                stroke={m.color} strokeWidth={reached ? 0 : 1.2} />
+            </g>
+          );
+        })}
+        <g>
+          <circle cx={userX * 100} cy="7" r="5"
+            fill="var(--fg)" stroke="var(--accent)" strokeWidth="2"
+            style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}
+          />
+        </g>
+      </svg>
+      <Row justify="space-between" style={{ marginTop: 8, fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+        {milestones.map(m => (
+          <span key={m.id} style={{
+            flex: 1, textAlign: "center",
+            color: portfolio >= m.target ? m.color : "var(--fg-soft)",
+            fontWeight: portfolio >= m.target ? 600 : 400,
+          }}>
+            {m.label.replace(" FIRE", "").replace("Recommended", "Rec.")}
+          </span>
+        ))}
+      </Row>
+    </div>
+  );
+}
+
+// ─── PortfolioCapacityCard — what the portfolio can cover right now ────────
+function PortfolioCapacityCard({ safeMonthly, essentials, fullLife, isMobile }) {
+  const essCoverage = essentials > 0 ? Math.min(1, safeMonthly / essentials) : 0;
+  const lifeCoverage = fullLife > 0 ? Math.min(1, safeMonthly / fullLife) : 0;
+  const essGap = Math.max(0, essentials - safeMonthly);
+  const lifeGap = Math.max(0, fullLife - safeMonthly);
+
+  const CoverageBar = ({ label, coverage, gap }) => {
+    const pct = coverage * 100;
+    const tone = pct >= 100 ? "good" : pct >= 70 ? "warn" : "bad";
+    const toneColor = tone === "good" ? "var(--good)" : tone === "warn" ? "var(--warn)" : "var(--bad)";
+    return (
+      <div>
+        <Row justify="space-between" align="baseline" style={{ marginBottom: 6 }}>
+          <span style={{ fontSize: 13, color: "var(--fg)", fontWeight: 500 }}>{label}</span>
+          <Row gap={10} align="baseline">
+            <span style={{ fontSize: 13, fontWeight: 700, color: toneColor, fontFamily: "var(--font-mono)" }}>{pct.toFixed(0)}%</span>
+            {gap > 0 && (
+              <span style={{ fontSize: 11, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+                {fmtEur(gap)}/mo gap
+              </span>
+            )}
+          </Row>
+        </Row>
+        <div style={{ position: "relative", height: 6, background: "var(--surface-3)", borderRadius: 999, overflow: "hidden" }}>
+          <div style={{
+            position: "absolute", left: 0, top: 0, bottom: 0,
+            width: `${Math.min(100, pct)}%`, background: toneColor,
+            transition: "width 500ms ease",
+          }} />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Card padding={isMobile ? 20 : 24}>
+      <SectionHeader title="Portfolio capacity today" subtitle="What the current balance can sustainably cover, regardless of your spending plan." />
+      <div style={{
+        padding: "16px 18px", background: "var(--surface-2)",
+        borderRadius: 12, borderLeft: "3px solid var(--accent)", marginBottom: 16,
+      }}>
+        <div style={{ fontSize: 11, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+          Safe monthly income
+        </div>
+        <Row gap={10} align="baseline" style={{ marginTop: 4 }}>
+          <span style={{ fontSize: isMobile ? 28 : 34, fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)", letterSpacing: "-0.02em" }}>
+            {fmtEur(safeMonthly)}<span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-soft)" }}>/mo</span>
+          </span>
+        </Row>
+        <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 6 }}>
+          at 4% initial WR · {fmtEur(safeMonthly * 12)}/yr
+        </div>
+      </div>
+      <Stack gap={14}>
+        <CoverageBar label="Essentials" coverage={essCoverage} gap={essGap} />
+        <CoverageBar label="Full lifestyle" coverage={lifeCoverage} gap={lifeGap} />
+      </Stack>
+    </Card>
+  );
+}
+
+// ─── RunwayStackedBar ──────────────────────────────────────────────────────
+function RunwayStackedBar({ monthlyExpenses, cash, fortress, fixed, growth, isMobile }) {
+  if (monthlyExpenses <= 0) return null;
+  const cashMo   = cash    / monthlyExpenses;
+  const fortMo   = fortress / monthlyExpenses;
+  const fixedMo  = fixed   / monthlyExpenses;
+  const growthMo = growth  / monthlyExpenses;
+
+  const safeMo = cashMo + fortMo + fixedMo;
+  const chartCap = Math.max(safeMo * 1.4, 36);
+  const cashW   = Math.min(1, cashMo   / chartCap);
+  const fortW   = Math.min(1, fortMo   / chartCap);
+  const fixedW  = Math.min(1, fixedMo  / chartCap);
+  const growthVisible = Math.max(0, 1 - cashW - fortW - fixedW);
+
+  const Seg = ({ width, color, label, mo }) => (
+    <div style={{
+      flex: width, height: "100%", background: color,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      borderRight: "1px solid var(--bg)", minWidth: 0, overflow: "hidden",
+    }} title={`${label} ${mo.toFixed(1)}mo`}>
+      {width > 0.10 && (
+        <>
+          <span style={{ fontSize: 10, color: "var(--bg)", fontWeight: 700 }}>{label}</span>
+          <span style={{ fontSize: 11, color: "var(--bg)", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{mo.toFixed(0)}mo</span>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      <Row gap={0} style={{
+        height: 44, borderRadius: 8, overflow: "hidden",
+        border: "1px solid var(--hairline)", background: "var(--surface-3)",
+      }}>
+        <Seg width={cashW}   color="var(--b-cash)"     label="Cash"      mo={cashMo} />
+        <Seg width={fortW}   color="var(--b-fortress)" label="Safety"    mo={fortMo} />
+        <Seg width={fixedW}  color="var(--b-fixed)"    label="Stability" mo={fixedMo} />
+        <div style={{
+          flex: growthVisible, height: "100%",
+          background: "repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 6px, var(--surface-1) 6px, var(--surface-1) 12px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          {growthVisible > 0.15 && (
+            <span style={{ fontSize: 11, color: "var(--fg-mute)", fontWeight: 600 }}>Growth →</span>
+          )}
+        </div>
+      </Row>
+      <Row justify="space-between" style={{ marginTop: 6, fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+        <span>0</span>
+        <span>{Math.round(chartCap / 4)}mo</span>
+        <span>{Math.round(chartCap / 2)}mo</span>
+        <span>{Math.round(chartCap * 3 / 4)}mo</span>
+        <span>{Math.round(chartCap)}mo</span>
+      </Row>
+    </div>
+  );
+}
+
+// ─── MilestoneRow — compact single-line milestone ─────────────────────────
+function MilestoneRow({ m, portfolio }) {
+  const pct = Math.min(1, portfolio / m.target);
+  return (
+    <Row justify="space-between" align="center" gap={12} style={{
+      padding: "10px 14px",
+      background: m.reached ? "var(--good-soft)" : "var(--surface-2)",
+      borderRadius: 10,
+      border: `1px solid ${m.reached ? "rgba(108,212,154,0.25)" : "var(--hairline)"}`,
+    }}>
+      <Row gap={10} style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ width: 8, height: 8, borderRadius: 2, background: m.color, flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>{m.label}</span>
+        <span style={{ fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>{(m.wr * 100).toFixed(1)}%</span>
+        {m.caution && (
+          <span title={m.caution} style={{ fontSize: 11, color: "var(--warn)", cursor: "help" }}>⚠</span>
+        )}
+      </Row>
+      <div style={{ width: 80, height: 4, background: "var(--surface-3)", borderRadius: 999, overflow: "hidden", flexShrink: 0 }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: m.color, transition: "width 500ms ease" }} />
+      </div>
+      <div style={{ minWidth: 70, textAlign: "right" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: m.reached ? "var(--good)" : "var(--fg)", fontFamily: "var(--font-mono)" }}>
+          {fmtMonths(m.months)}
+        </div>
+      </div>
+    </Row>
+  );
+}
+
+// ─── GKZoneRibbon ─────────────────────────────────────────────────────────
 function GKZoneRibbon({ wr, isMobile, currentAnnual, proposedAnnual }) {
   const min = 0, max = 8;
   const pct = Math.min(1, Math.max(0, (wr - min) / (max - min)));
@@ -83,9 +320,7 @@ function GKZoneRibbon({ wr, isMobile, currentAnnual, proposedAnnual }) {
               ? <>Below the 3.2% guardrail. You can raise <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(currentAnnual)}</strong> → <strong style={{ color: "var(--good)", fontFamily: "var(--font-mono)" }}>{fmtEur(proposedAnnual)}</strong> (+10%).</>
               : zone.id === "elevated"
                 ? <>Above the 4% baseline. Inflation adjustment next year: <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(currentAnnual)}</strong> → <strong style={{ color: "var(--warn)", fontFamily: "var(--font-mono)" }}>{fmtEur(proposedAnnual)}</strong>. Watch it.</>
-                : zone.id === "safe"
-                  ? "Within the safe corridor. No adjustment needed."
-                  : "Drawing comfortably."
+                : "Within the safe corridor. No adjustment needed."
         }
       </div>
     </div>
@@ -118,12 +353,22 @@ function AllocationDonut({ slices, total, size = 140, stroke = 18 }) {
   );
 }
 
-// ─── This Month card ─────────────────────────────────────────────────────
-// Renders the structured `monthlyOutlook` payload. Three layouts share a frame:
-// - Accumulating: green mode pill, "Invest …" primary block, floor tracker when
-//   the recommendation is floor-driven.
-// - Lean drawdown: amber mode pill, "Trim fun …" primary block.
-// - Shortfall: amber/red pill with WR zone, "Withdraw …" primary block.
+// ─── TriggerRow ───────────────────────────────────────────────────────────
+function TriggerRow({ t }) {
+  const tones  = { immediate: "bad", week: "warn", month: "accent", quarter: "default" };
+  const labels = { immediate: "Act now", week: "This week", month: "This month", quarter: "This quarter" };
+  return (
+    <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--hairline)" }}>
+      <Row justify="space-between" align="flex-start" gap={12} style={{ marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>{t.event}</span>
+        <Pill tone={tones[t.urgency]} size="xs">{labels[t.urgency]}</Pill>
+      </Row>
+      <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>{t.action}</div>
+    </div>
+  );
+}
+
+// ─── This Month card ──────────────────────────────────────────────────────
 function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
   const cf = outlook.cf;
   const p = outlook.primary;
@@ -135,7 +380,6 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
       ? { tone: "warn", label: "Drawdown" }
       : { tone: "bad",  label: "Drawdown" };
 
-  // Cashflow chip color helpers
   const chipBase = {
     padding: "6px 10px", borderRadius: 999, fontSize: 12,
     fontFamily: "var(--font-mono)", fontWeight: 600,
@@ -151,11 +395,8 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
     fontWeight: 700,
   };
 
-  // Primary action accent color (uses bucket color when there is a bucket)
   const accentColor = p.meta?.color || "var(--warn)";
-  const accentRaw   = p.meta?.raw   || "var(--warn)";
 
-  // Floor-mode rationale string
   const floorRationale = (reason.type === "floor" && p.bucketKey === "fortress")
     ? `Floor ${fmtEur(reason.floorEur)} = ${reason.floorMonths} months of expenses. You're at ${fmtEur(cf.totalExpenses > 0 ? Math.round(outlook.floorContext.current) : 0)} — ${fmtEur(reason.gap)} short. Floor takes priority over the ${reason.targetPct}% target.`
     : (reason.type === "floor"
@@ -196,10 +437,8 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
     return null;
   })();
 
-  // ─── Render ─────────────────────────────────────────────────────────
   return (
     <Card padding={isMobile ? 20 : 24}>
-      {/* Header row: eyebrow + mode pill aligned right */}
       <Row justify="space-between" align="flex-start" gap={12} style={{ marginBottom: 14 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 11, color: "var(--fg-soft)", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, marginBottom: 6 }}>
@@ -215,7 +454,6 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
         <Pill tone={modePill.tone} size="sm">{modePill.label}</Pill>
       </Row>
 
-      {/* Cashflow strip — inline chips */}
       <Row gap={8} wrap style={{ marginBottom: 16 }}>
         <span style={{ ...chipBase, color: "var(--good)" }}>Income +{fmtEur(cf.incomeMonthly)}</span>
         <span style={chipBase}>Essentials −{fmtEur(cf.essentials)}</span>
@@ -225,7 +463,6 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
         </span>
       </Row>
 
-      {/* Primary action block */}
       <div style={{
         borderLeft: `4px solid ${accentColor}`,
         background: "var(--surface-2)",
@@ -268,7 +505,6 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
         )}
       </div>
 
-      {/* Floor tracker — only when the primary action is floor-driven */}
       {outlook.floorContext && (() => {
         const fc = outlook.floorContext;
         const pct = fc.floor > 0 ? Math.min(1, fc.current / fc.floor) : 0;
@@ -297,7 +533,6 @@ function ThisMonthCard({ outlook, state, isMobile, monthsOf }) {
         );
       })()}
 
-      {/* Secondary actions */}
       {outlook.secondary.length > 0 && (
         <Stack gap={8}>
           {outlook.secondary.map((s, i) => {
@@ -350,50 +585,23 @@ function TodayView({ state, setState }) {
   const phase = cf.phase;
   const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
 
-  const fortressMonths = cf.totalExpenses > 0 ? (state.bucketXEON||0) / cf.totalExpenses : 0;
-  const totalRunwayMonths = cf.totalExpenses > 0 ? ((state.bucketXEON||0) + (state.bucketCash||0)) / cf.totalExpenses : 0;
-
-  // Fisher equation for real return: (1+nom)/(1+inf) − 1
-  const realReturn = ((1 + (state.gkNominalReturn || 7.0) / 100) / (1 + (state.gkInflation || 2.0) / 100) - 1) * 100;
-  const fireTarget = cf.annualExpenses / GK_CONFIG.IWR;
-  const progress = fireTarget > 0 ? Math.min(1, portfolio / fireTarget) : 0;
-  const fireGap = Math.max(0, fireTarget - portfolio);
-  // Correct FV-with-contributions formula: n = ln((F·r + c)/(P·r + c)) / ln(1+r)
-  // Use geometric 12th-root conversion so (1+r)^12 == (1+annualRate) exactly.
-  // Naive annual/12 over-states compounding by ~20 bps/yr at 7% real return.
-  const _rMonthly = Math.pow(1 + realReturn / 100, 1 / 12) - 1;
-  const monthsToFire = cf.surplusMonthly > 0 && fireGap > 0
-    ? (_rMonthly === 0
-        ? Math.ceil(fireGap / cf.surplusMonthly)
-        : Math.log((fireTarget * _rMonthly + cf.surplusMonthly) / (portfolio * _rMonthly + cf.surplusMonthly)) / Math.log(1 + _rMonthly))
-    : (fireGap === 0 ? 0 : Infinity);
-
-  const lastWithdrawal = effectiveLastWithdrawal(state);
-  const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
-  const wrZone = getGKZone(wr);
-  const proposedAnnual = lastWithdrawal > 0
-    ? (wrZone.id === "cut" ? lastWithdrawal * 0.9
-       : wrZone.id === "prosperity" ? lastWithdrawal * 1.1
-       : lastWithdrawal * (1 + Math.min((state.gkInflation || 2.0) / 100, 0.06)))
+  // Defense runway: Cash + Safety + Stability, before touching Growth
+  const safeRunwayMonths = cf.totalExpenses > 0
+    ? ((state.bucketXEON||0) + (state.bucketCash||0) + (state.bucketFixedIncome||0)) / cf.totalExpenses
     : 0;
 
-  const safeMonthly = portfolio * GK_CONFIG.IWR / 12;
-  const heroMonthlyExpenses = cf.essentials + cf.fun;
-  const heroEssCoverage = cf.essentials > 0 ? (safeMonthly / cf.essentials) * 100 : 0;
-  const heroLifeCoverage = heroMonthlyExpenses > 0 ? (safeMonthly / heroMonthlyExpenses) * 100 : 0;
+  // Fisher equation for real return
+  const realReturn = ((1 + (state.gkNominalReturn || 7.0) / 100) / (1 + (state.gkInflation || 2.0) / 100) - 1) * 100;
 
-  const slices = [
-    { key: "growth",     value: state.bucketVWCE,         color: "var(--b-growth)",   label: "Growth",    sub: "VWCE" },
-    { key: "fortress",   value: state.bucketXEON,         color: "var(--b-fortress)", label: "Safety",    sub: "XEON" },
-    { key: "termShield", value: state.bucketFixedIncome,  color: "var(--b-fixed)",    label: "Stability", sub: "Bonds" },
-    { key: "cash",       value: state.bucketCash,         color: "var(--b-cash)",     label: "Cash",      sub: "EUR" },
-  ];
+  // FIRE targets
+  const fireTarget      = cf.annualExpenses / GK_CONFIG.IWR;   // Aggressive 4% — used for hero sentence
+  const bulletproofTarget = cf.annualExpenses / 0.03;           // Bulletproof 3% — used for ring max
 
-  const outlook = monthlyOutlook(state);
-  const monthsOf = (eur) => cf.totalExpenses > 0 ? eur / cf.totalExpenses : 0;
+  // progress for hero sentence logic; ringProgress for ring arc
+  const progress      = fireTarget > 0 ? Math.min(1, portfolio / fireTarget) : 0;
+  const ringProgress  = bulletproofTarget > 0 ? Math.min(1, portfolio / bulletproofTarget) : 0;
+  const fireGap       = Math.max(0, fireTarget - portfolio);
 
-  // FIRE milestones — multiple withdrawal-rate scenarios
-  // Geometric 12th-root gives the exact effective monthly rate: (1+r_annual)^(1/12)−1.
   const realReturnMonthly = Math.pow(1 + realReturn / 100, 1 / 12) - 1;
   const monthsToTarget = (target) => {
     if (portfolio >= target) return 0;
@@ -405,13 +613,20 @@ function TodayView({ state, setState }) {
     const r = realReturnMonthly;
     const c = cf.surplusMonthly;
     if (r === 0) return Math.ceil((target - portfolio) / c);
-    // Guard negative denominator/numerator: portfolio decay > contributions → unreachable.
     const numerator   = target    * r + c;
     const denominator = portfolio * r + c;
     if (denominator <= 0 || numerator <= 0) return Infinity;
     const n = Math.log(numerator / denominator) / Math.log(1 + r);
     return Number.isFinite(n) && n > 0 && n <= 600 ? Math.ceil(n) : Infinity;
   };
+
+  const _rMonthly = realReturnMonthly;
+  const monthsToFire = cf.surplusMonthly > 0 && fireGap > 0
+    ? (_rMonthly === 0
+        ? Math.ceil(fireGap / cf.surplusMonthly)
+        : Math.log((fireTarget * _rMonthly + cf.surplusMonthly) / (portfolio * _rMonthly + cf.surplusMonthly)) / Math.log(1 + _rMonthly))
+    : (fireGap === 0 ? 0 : Infinity);
+
   const monthsLayoffOnly = (() => {
     if (portfolio >= fireTarget) return 0;
     if (realReturnMonthly <= 0) return Infinity;
@@ -419,11 +634,32 @@ function TodayView({ state, setState }) {
     return n > 600 ? Infinity : Math.ceil(n);
   })();
 
+  const lastWithdrawal = effectiveLastWithdrawal(state);
+  const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
+  const wrZone = getGKZone(wr);
+  const proposedAnnual = lastWithdrawal > 0
+    ? (wrZone.id === "cut" ? lastWithdrawal * 0.9
+       : wrZone.id === "prosperity" ? lastWithdrawal * 1.1
+       : lastWithdrawal * (1 + Math.min((state.gkInflation || 2.0) / 100, 0.06)))
+    : 0;
+
+  const safeMonthly = portfolio * GK_CONFIG.IWR / 12;
+
+  const slices = [
+    { key: "growth",     value: state.bucketVWCE,         color: "var(--b-growth)",   label: "Growth",    sub: "VWCE" },
+    { key: "fortress",   value: state.bucketXEON,         color: "var(--b-fortress)", label: "Safety",    sub: "XEON" },
+    { key: "termShield", value: state.bucketFixedIncome,  color: "var(--b-fixed)",    label: "Stability", sub: "Bonds" },
+    { key: "cash",       value: state.bucketCash,         color: "var(--b-cash)",     label: "Cash",      sub: "EUR" },
+  ];
+
+  const outlook = monthlyOutlook(state);
+  const monthsOf = (eur) => cf.totalExpenses > 0 ? eur / cf.totalExpenses : 0;
+
   const milestones = [
-    { id: "lean",         label: "Lean FIRE",        wr: 0.045,         color: "var(--accent)",  sub: "Essentials only, 4.5% IWR", caution: "No discretionary buffer — a GK 10% cut would drop below essential spending." },
-    { id: "aggressive",   label: "Aggressive FIRE",  wr: GK_CONFIG.IWR, color: "var(--b-fixed)", sub: "Full spend, 4% IWR" },
-    { id: "recommended",  label: "Recommended",      wr: 0.035, color: "var(--good)",       sub: "Comfortable margin" },
-    { id: "bulletproof",  label: "Bulletproof",      wr: 0.030, color: "var(--b-fortress)", sub: "Sequence-risk proof" },
+    { id: "lean",        label: "Lean FIRE",       wr: 0.045,         color: "var(--accent)",  sub: "Essentials only, 4.5% IWR", caution: "No discretionary buffer — a GK 10% cut would drop below essential spending." },
+    { id: "aggressive",  label: "Aggressive FIRE", wr: GK_CONFIG.IWR, color: "var(--b-fixed)", sub: "Full spend, 4% IWR" },
+    { id: "recommended", label: "Recommended",     wr: 0.035,         color: "var(--good)",    sub: "Comfortable margin" },
+    { id: "bulletproof", label: "Bulletproof",     wr: 0.030,         color: "var(--b-fortress)", sub: "Sequence-risk proof" },
   ].map(m => {
     const target = m.id === "lean" ? (cf.essentials * 12) / m.wr : cf.annualExpenses / m.wr;
     const months = monthsToTarget(target);
@@ -431,34 +667,28 @@ function TodayView({ state, setState }) {
     return { ...m, target, months, reached };
   });
 
-  const fmtMonths = (n) => {
-    if (n === 0) return "Reached";
-    if (!Number.isFinite(n)) return "30+ yrs";
-    if (n < 12) return `${n} mo`;
-    const y = Math.floor(n / 12);
-    const m = n % 12;
-    return m === 0 ? `${y} yr${y > 1 ? "s" : ""}` : `${y}y ${m}mo`;
-  };
-  const fmtETA = (n) => {
-    if (!Number.isFinite(n) || n === 0) return null;
-    const d = new Date();
-    d.setMonth(d.getMonth() + n);
-    return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
-  };
+  // Ring ticks: normalised against Bulletproof as 100%
+  const ringTicks = milestones.map(m => ({
+    position: Math.min(1, m.target / bulletproofTarget),
+    color: m.color,
+    reached: portfolio >= m.target,
+  }));
 
   const relevantTriggers = evaluateTriggers(state);
 
   return (
-    <Stack gap={isMobile ? 16 : 20}>
-      {/* Hero */}
+    <Stack gap={isMobile ? 16 : 16}>
+
+      {/* ── Hero ── */}
       <Card padding={isMobile ? 22 : 32} tone="default">
         <Row gap={isMobile ? 20 : 32} wrap={isMobile} align="center">
           <ProgressRing
-            value={progress} size={isMobile ? 132 : 160}
+            value={ringProgress} size={isMobile ? 132 : 160}
             stroke={isMobile ? 12 : 14}
-            label={`${Math.round(progress * 100)}%`}
+            label={`${Math.round(ringProgress * 100)}%`}
             sub="of FIRE"
-            color={progress >= 1 ? "var(--good)" : "var(--accent)"}
+            color={ringProgress >= 1 ? "var(--good)" : "var(--accent)"}
+            ticks={ringTicks}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 8 }}>
@@ -470,80 +700,43 @@ function TodayView({ state, setState }) {
             <div style={{ fontSize: 14, color: "var(--fg-mute)", marginTop: 12, lineHeight: 1.6 }}>
               {progress >= 1 ? (
                 <>You've crossed the FIRE target of <strong style={{ color: "var(--fg)" }}>{fmtEur(fireTarget)}</strong>. {fmtEur(portfolio - fireTarget)} above the line.</>
-              ) : (
+              ) : Number.isFinite(monthsToFire) ? (
                 <>
                   <strong style={{ color: "var(--fg)" }}>{fmtEur(fireGap)}</strong> to FIRE — about{" "}
-                  <strong style={{ color: "var(--fg)" }}>{Number.isFinite(monthsToFire) ? `${(monthsToFire / 12).toFixed(1)} years` : "—"}</strong> at current pace.
+                  <strong style={{ color: "var(--fg)" }}>{(monthsToFire / 12).toFixed(1)} years</strong> at current pace.
+                </>
+              ) : (
+                <>
+                  <strong style={{ color: "var(--fg)" }}>{fmtEur(fireGap)}</strong> to FIRE.
+                  No surplus right now — portfolio growth alone would close the gap in{" "}
+                  <strong style={{ color: "var(--fg)" }}>{fmtMonths(monthsLayoffOnly)}</strong>.
                 </>
               )}
             </div>
-            <Row gap={20} wrap style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--hairline)" }}>
-              <div>
-                <div style={{ fontSize: 10, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>FIRE target</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{fmtEur(fireTarget)}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Annual cost</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 2 }}>{fmtEur(cf.annualExpenses)}</div>
-              </div>
-            </Row>
+            <MilestoneJourney portfolio={portfolio} milestones={milestones} isMobile={isMobile} />
           </div>
         </Row>
-        {/* Independence snapshot — what the portfolio safely covers right now */}
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
-          <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: "3px solid var(--accent)" }}>
-            <div style={{ fontSize: 11, color: "var(--fg-soft)", marginBottom: 4 }}>Portfolio safely provides</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>{fmtEur(safeMonthly)}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}>/mo</span></div>
-            <div style={{ fontSize: 10, color: "var(--fg-soft)", marginTop: 4 }}>at {fmtPct(GK_CONFIG.IWR * 100, 0)} initial WR</div>
-          </div>
-          {(() => {
-            const essGap = Math.max(0, cf.essentials - safeMonthly);
-            const essColor = heroEssCoverage >= 100 ? "var(--good)" : "var(--warn)";
-            return (
-              <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: `3px solid ${essColor}` }}>
-                <Row justify="space-between" align="baseline">
-                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Essentials</div>
-                  <Pill tone={heroEssCoverage >= 100 ? "good" : "warn"} size="xs">{heroEssCoverage.toFixed(0)}%</Pill>
-                </Row>
-                <div style={{ fontSize: 18, fontWeight: 700, color: essColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
-                  {fmtEur(Math.min(safeMonthly, cf.essentials))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(cf.essentials)}</span>
-                </div>
-                {essGap > 0 && <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 4 }}>Gap: {fmtEur(essGap)}/mo needs income</div>}
-                {essGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
-              </div>
-            );
-          })()}
-          {(() => {
-            const lifeGap = Math.max(0, heroMonthlyExpenses - safeMonthly);
-            const lifeColor = heroLifeCoverage >= 100 ? "var(--good)" : heroLifeCoverage >= 70 ? "var(--warn)" : "var(--bad)";
-            return (
-              <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, borderLeft: `3px solid ${lifeColor}` }}>
-                <Row justify="space-between" align="baseline">
-                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Full lifestyle</div>
-                  <Pill tone={heroLifeCoverage >= 100 ? "good" : heroLifeCoverage >= 70 ? "warn" : "bad"} size="xs">{heroLifeCoverage.toFixed(0)}%</Pill>
-                </Row>
-                <div style={{ fontSize: 18, fontWeight: 700, color: lifeColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
-                  {fmtEur(Math.min(safeMonthly, heroMonthlyExpenses))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(heroMonthlyExpenses)}</span>
-                </div>
-                {lifeGap > 0 && <div style={{ fontSize: 11, color: lifeColor, marginTop: 4 }}>Gap: {fmtEur(lifeGap)}/mo needs income</div>}
-                {lifeGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
-              </div>
-            );
-          })()}
-        </div>
       </Card>
 
-      {/* This month — moved up. Render here so it sits directly under the hero. */}
-      <ThisMonthCard outlook={outlook} state={state} isMobile={isMobile} monthsOf={monthsOf} />
-
-      {/* GK zone — hidden while accumulating (WR is not meaningful with no draws). */}
+      {/* ── WR card — directly under hero in drawdown, accent tone ── */}
       {outlook.mode !== "accumulating" && (
-        <Card padding={isMobile ? 20 : 24}>
+        <Card padding={isMobile ? 20 : 24} tone="accent">
           <GKZoneRibbon wr={wr} isMobile={isMobile} currentAnnual={lastWithdrawal} proposedAnnual={proposedAnnual} />
         </Card>
       )}
 
-      {/* FIRE milestones — read-only, multi-scenario */}
+      {/* ── Portfolio capacity ── */}
+      <PortfolioCapacityCard
+        safeMonthly={safeMonthly}
+        essentials={cf.essentials}
+        fullLife={cf.essentials + cf.fun}
+        isMobile={isMobile}
+      />
+
+      {/* ── This month ── */}
+      <ThisMonthCard outlook={outlook} state={state} isMobile={isMobile} monthsOf={monthsOf} />
+
+      {/* ── FIRE milestones — compact rows ── */}
       <Card padding={isMobile ? 20 : 24}>
         <SectionHeader
           eyebrow="Milestones"
@@ -552,99 +745,46 @@ function TodayView({ state, setState }) {
             ? `Assumes ${fmtEur(cf.surplusMonthly)}/mo contributions and ${realReturn.toFixed(1)}% real return.`
             : `No surplus — projection uses portfolio growth only at ${realReturn.toFixed(1)}% real return.`}
         />
-        <Stack gap={10}>
-          {milestones.map(m => {
-            const pct = Math.min(1, portfolio / m.target);
-            const eta = fmtETA(m.months);
-            return (
-              <div key={m.id} style={{
-                padding: "14px 16px",
-                background: m.reached ? "var(--good-soft)" : "var(--surface-2)",
-                borderRadius: 12,
-                border: `1px solid ${m.reached ? "rgba(108,212,154,0.30)" : "var(--hairline)"}`,
-              }}>
-                <Row justify="space-between" align="center" gap={12} wrap={isMobile} style={{ marginBottom: 10 }}>
-                  <Row gap={10} align="center" style={{ minWidth: 0 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: m.color, flexShrink: 0 }} />
-                    <div style={{ minWidth: 0 }}>
-                      <Row gap={8} align="baseline" wrap>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--fg)" }}>{m.label}</span>
-                        <span style={{ fontSize: 11, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>{(m.wr * 100).toFixed(1)}% WR</span>
-                      </Row>
-                      <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 2 }}>{m.sub}</div>
-                    </div>
-                  </Row>
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: m.reached ? "var(--good)" : "var(--fg)", fontFamily: "var(--font-mono)" }}>
-                      {fmtMonths(m.months)}
-                    </div>
-                    {eta && !m.reached && (
-                      <div style={{ fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>{eta}</div>
-                    )}
-                  </div>
-                </Row>
-                <div style={{ position: "relative", height: 4, background: "var(--surface-3)", borderRadius: 999, overflow: "hidden", marginBottom: 6 }}>
-                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct * 100}%`, background: m.color, transition: "width 600ms ease" }} />
-                </div>
-                <Row justify="space-between">
-                  <span style={{ fontSize: 11, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
-                    {fmtEur(portfolio)} of {fmtEur(m.target)}
-                  </span>
-                  <span style={{ fontSize: 11, color: "var(--fg-mute)", fontFamily: "var(--font-mono)" }}>
-                    {(pct * 100).toFixed(0)}%
-                  </span>
-                </Row>
-                {m.caution && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--warn)", lineHeight: 1.5 }}>
-                    ⚠ {m.caution}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <Stack gap={8}>
+          {milestones.map(m => <MilestoneRow key={m.id} m={m} portfolio={portfolio} />)}
         </Stack>
-
-        {/* Layoff scenario footnote */}
-        <div style={{ marginTop: 14, padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10, borderLeft: "3px solid var(--warn)" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--fg)", marginBottom: 4 }}>If contributions stopped tomorrow</div>
-          <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>
-            {portfolio >= fireTarget ? (
-              <>You're already past Aggressive FIRE — no contributions needed.</>
-            ) : !Number.isFinite(monthsLayoffOnly) ? (
-              <>The {fmtEur(fireTarget)} target isn't reachable within 30 years on portfolio growth alone. Part-time income would close the gap.</>
-            ) : (
-              <>
-                At {realReturn.toFixed(1)}% real return with €0 going in, you'd reach <strong style={{ color: "var(--fg)" }}>{fmtEur(fireTarget)}</strong> in <strong style={{ color: "var(--fg)" }}>{fmtMonths(monthsLayoffOnly)}</strong> ({fmtETA(monthsLayoffOnly)}). Your runway covers <strong style={{ color: "var(--fg)" }}>{Math.round(totalRunwayMonths)} months</strong> — {totalRunwayMonths > monthsLayoffOnly ? "the runway outlasts the gap." : "the gap exceeds runway, so part-time income or a cut to spending would help."}
-              </>
-            )}
-          </div>
+        <div style={{ marginTop: 10 }}>
+          <Disclosure title="What if contributions stopped tomorrow?">
+            <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55, padding: "10px 0 2px" }}>
+              {portfolio >= fireTarget ? (
+                <>You're already past Aggressive FIRE — no contributions needed.</>
+              ) : !Number.isFinite(monthsLayoffOnly) ? (
+                <>The {fmtEur(fireTarget)} target isn't reachable within 30 years on portfolio growth alone. Part-time income would close the gap.</>
+              ) : (
+                <>
+                  At {realReturn.toFixed(1)}% real return with €0 going in, you'd reach <strong style={{ color: "var(--fg)" }}>{fmtEur(fireTarget)}</strong> in <strong style={{ color: "var(--fg)" }}>{fmtMonths(monthsLayoffOnly)}</strong> ({fmtETA(monthsLayoffOnly)}). Your runway covers <strong style={{ color: "var(--fg)" }}>{Math.round(safeRunwayMonths)} months</strong> — {safeRunwayMonths > monthsLayoffOnly ? "the runway outlasts the gap." : "the gap exceeds runway, so part-time income or a cut to spending would help."}
+                </>
+              )}
+            </div>
+          </Disclosure>
         </div>
       </Card>
 
-      {/* Two-up: runway + allocation */}
+      {/* ── Two-up: runway + allocation ── */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 }}>
         <Card>
-          <SectionHeader title="Runway" subtitle="If income stops today" />
-          <Stack gap={12}>
-            <div>
-              <div style={{ fontSize: 38, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", fontFamily: "var(--font-display)", lineHeight: 1 }}>
-                {Math.round(totalRunwayMonths)}<span style={{ fontSize: 16, color: "var(--fg-soft)", marginLeft: 6, fontWeight: 500 }}>months</span>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 6 }}>
-                from Safety + Cash, before touching Growth
-              </div>
+          <SectionHeader title="Runway" subtitle="If income stops today, here's the burn order." />
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 38, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", fontFamily: "var(--font-display)", lineHeight: 1 }}>
+              {Math.round(safeRunwayMonths)}<span style={{ fontSize: 16, color: "var(--fg-soft)", marginLeft: 6, fontWeight: 500 }}>months</span>
             </div>
-            <Row gap={10}>
-              <div style={{ flex: 1, padding: 10, background: "var(--surface-2)", borderRadius: 8 }}>
-                <div style={{ fontSize: 10, color: "var(--fg-soft)" }}>Safety only</div>
-                <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{fortressMonths.toFixed(0)}mo</div>
-              </div>
-              <div style={{ flex: 1, padding: 10, background: "var(--surface-2)", borderRadius: 8 }}>
-                <div style={{ fontSize: 10, color: "var(--fg-soft)" }}>+ Cash</div>
-                <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "var(--font-mono)" }}>{((state.bucketCash||0) / Math.max(1, cf.totalExpenses)).toFixed(0)}mo</div>
-              </div>
-            </Row>
-          </Stack>
+            <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 6 }}>
+              from defense buckets, before touching Growth
+            </div>
+          </div>
+          <RunwayStackedBar
+            monthlyExpenses={cf.totalExpenses}
+            cash={state.bucketCash || 0}
+            fortress={state.bucketXEON || 0}
+            fixed={state.bucketFixedIncome || 0}
+            growth={state.bucketVWCE || 0}
+            isMobile={isMobile}
+          />
         </Card>
 
         <Card>
@@ -675,33 +815,47 @@ function TodayView({ state, setState }) {
               })}
             </Stack>
           </Row>
+          {(() => {
+            const drifts = slices.map(s => {
+              const pct = portfolio > 0 ? (s.value / portfolio) * 100 : 0;
+              const target = phase.buckets[s.key].target;
+              return { key: s.key, label: s.label, drift: pct - target, eur: Math.abs(((pct - target) / 100) * portfolio) };
+            });
+            const worst = drifts.filter(d => Math.abs(d.drift) >= 3).sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift))[0];
+            if (!worst) return null;
+            return (
+              <div style={{ marginTop: 14, padding: "10px 12px", background: "var(--surface-2)", borderRadius: 8, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5, borderLeft: "2px solid var(--warn)" }}>
+                <span style={{ color: "var(--warn)", fontWeight: 600 }}>↻ Rebalance:</span>{" "}
+                <strong style={{ color: "var(--fg)" }}>{worst.label}</strong> is {Math.abs(worst.drift).toFixed(1)} pp{" "}
+                {worst.drift > 0 ? "above" : "below"} target ({fmtEur(worst.eur)}). Adjust at your next monthly review.
+              </div>
+            );
+          })()}
         </Card>
       </div>
 
-      {/* Decision triggers */}
-      {relevantTriggers.length > 0 && (
-        <Card>
-          <SectionHeader
-            title="Decisions ahead"
-            subtitle="Triggers relevant to where you are now."
-          />
-          <Stack gap={10}>
-            {relevantTriggers.map((t) => {
-              const tones = { immediate: "bad", week: "warn", month: "accent", quarter: "default" };
-              const labels = { immediate: "Act now", week: "This week", month: "This month", quarter: "This quarter" };
-              return (
-                <div key={t.key} style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 12, border: "1px solid var(--hairline)" }}>
-                  <Row justify="space-between" align="flex-start" gap={12} style={{ marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>{t.event}</span>
-                    <Pill tone={tones[t.urgency]} size="xs">{labels[t.urgency]}</Pill>
-                  </Row>
-                  <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.55 }}>{t.action}</div>
-                </div>
-              );
-            })}
-          </Stack>
-        </Card>
-      )}
+      {/* ── Decisions ahead — top 2 inline, rest in disclosure ── */}
+      {relevantTriggers.length > 0 && (() => {
+        const order = { immediate: 0, week: 1, month: 2, quarter: 3 };
+        const sorted = [...relevantTriggers].sort((a, b) => (order[a.urgency] ?? 9) - (order[b.urgency] ?? 9));
+        const shown  = sorted.slice(0, 2);
+        const hidden = sorted.slice(2);
+        return (
+          <Card>
+            <SectionHeader title="Decisions ahead" subtitle="Triggers relevant to where you are now." />
+            <Stack gap={10}>
+              {shown.map(t => <TriggerRow key={t.key} t={t} />)}
+            </Stack>
+            {hidden.length > 0 && (
+              <Disclosure title={`Show ${hidden.length} more`} defaultOpen={false}>
+                <Stack gap={10} style={{ marginTop: 8 }}>
+                  {hidden.map(t => <TriggerRow key={t.key} t={t} />)}
+                </Stack>
+              </Disclosure>
+            )}
+          </Card>
+        );
+      })()}
 
       <Disclosure title="What is the GK withdrawal rate?" icon="ⓘ">
         <p>The <strong>Guyton-Klinger guardrails</strong> are a withdrawal rule that adjusts how much you take from the portfolio each year based on how it's performed.</p>
