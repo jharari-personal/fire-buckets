@@ -6,7 +6,8 @@ const { useMemo } = React;
 const EMPLOYMENT_START = new Date(2026, 0, 1); // Jan 1 2026
 
 // ─── Drawdown chart (pure SVG, responsive width) ───
-function DrawdownChart({ bucketSeries, transitions, months, isMobile }) {
+// defenseOnly=true: shows only Cash+XEON+Bonds scaled to those buckets (Fix 13)
+function DrawdownChart({ bucketSeries, transitions, months, isMobile, defenseOnly }) {
   const containerRef = React.useRef(null);
   const [containerW, setContainerW] = React.useState(0);
 
@@ -21,27 +22,32 @@ function DrawdownChart({ bucketSeries, transitions, months, isMobile }) {
 
   const padL = 54, padR = 14, padT = 14, padB = 28;
   const w = containerW || (isMobile ? 340 : 680);
-  const h = 240;
+  const h = 200;
   const n = bucketSeries.length;
   if (n === 0) return null;
 
-  const maxV = Math.max(...bucketSeries.map(s => s.total), 1);
+  const displayKeys = defenseOnly ? ["cash", "xeon", "bonds"] : ["cash", "xeon", "bonds", "vwce"];
+  const displayColors = defenseOnly
+    ? [BUCKET_META.cash.raw, BUCKET_META.fortress.raw, BUCKET_META.termShield.raw]
+    : [BUCKET_META.cash.raw, BUCKET_META.fortress.raw, BUCKET_META.termShield.raw, BUCKET_META.growth.raw];
+
+  const maxV = defenseOnly
+    ? Math.max(...bucketSeries.map(s => s.cash + s.xeon + s.bonds), 1)
+    : Math.max(...bucketSeries.map(s => s.total), 1);
+
   const xs = (i) => padL + (i / Math.max(1, n - 1)) * (w - padL - padR);
   const ys = (v) => padT + (h - padT - padB) * (1 - v / maxV);
 
-  const bucketKeys = ["cash", "xeon", "bonds", "vwce"];
-  const colors = [BUCKET_META.cash.raw, BUCKET_META.fortress.raw, BUCKET_META.termShield.raw, BUCKET_META.growth.raw];
-
-  const areas = bucketKeys.map((key, ki) => {
-    const baseline = bucketSeries.map((s, i) => {
+  const areas = displayKeys.map((key, ki) => {
+    const baseline = bucketSeries.map((s) => {
       let base = 0;
-      for (let j = 0; j < ki; j++) base += s[bucketKeys[j]];
+      for (let j = 0; j < ki; j++) base += s[displayKeys[j]];
       return base;
     });
     const top = baseline.map((b, i) => b + bucketSeries[i][key]);
     const topPath = top.map((v, i) => `${i === 0 ? "M" : "L"}${xs(i)},${ys(v)}`).join(" ");
     const botPath = baseline.slice().reverse().map((v, i) => `L${xs(n - 1 - i)},${ys(v)}`).join(" ");
-    return { path: `${topPath} ${botPath} Z`, color: colors[ki], key };
+    return { path: `${topPath} ${botPath} Z`, color: displayColors[ki], key };
   });
 
   const yTicks = 4;
@@ -59,7 +65,7 @@ function DrawdownChart({ bucketSeries, transitions, months, isMobile }) {
             </g>
           ))}
           {areas.map(a => (
-            <path key={a.key} d={a.path} fill={a.color} opacity={0.35} />
+            <path key={a.key} d={a.path} fill={a.color} opacity={0.45} />
           ))}
           {transitions.filter(t => t.month > 0 && t.month < months).map((t, i) => (
             <g key={i}>
@@ -141,6 +147,21 @@ function SensitivityGrid({ exitPortfolio, currentSpend, currentIncome, isMobile 
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ─── Coverage chip — compact % card for the independence snapshot ───
+function CoverageChip({ label, coveragePct, gap }) {
+  const color = coveragePct >= 100 ? "var(--good)" : coveragePct >= 70 ? "var(--warn)" : "var(--bad)";
+  return (
+    <div style={{ padding: "16px 18px", background: "var(--surface-2)", borderRadius: 12 }}>
+      <div style={{ fontSize: 11, color: "var(--fg-soft)", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color, fontFamily: "var(--font-mono)" }}>
+        {coveragePct.toFixed(0)}<span style={{ fontSize: 14, fontWeight: 500, color: "var(--fg-soft)" }}>%</span>
+      </div>
+      {gap > 0 && <div style={{ fontSize: 11, color, marginTop: 4 }}>{fmtEur(gap)}/mo gap</div>}
+      {gap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered</div>}
     </div>
   );
 }
@@ -342,6 +363,14 @@ function FreedomView({ state, setState }) {
     return { cashRunway: cashR, xeonRunway: xeonR, bondsRunway: bondsR, totalDefensiveRunway: defR };
   }, [drawdownData]);
 
+  const fmtMonths = (n) => {
+    if (n === 0 || n === Infinity) return n === 0 ? "0mo" : "∞";
+    if (n < 12) return `${n}mo`;
+    const y = Math.floor(n / 12);
+    const m = n % 12;
+    return m === 0 ? `${y}y` : `${y}y ${m}mo`;
+  };
+
   // ── Render ──
   return (
     <Stack gap={isMobile ? 16 : 20}>
@@ -349,7 +378,6 @@ function FreedomView({ state, setState }) {
       {/* ─── Section 1: Employment Countdown ─── */}
       <Card>
         <SectionHeader
-          eyebrow="Countdown"
           title="Employment tracker"
           subtitle={`Since Jan 1, 2026 — ${daysSinceStart} days`}
         />
@@ -379,10 +407,12 @@ function FreedomView({ state, setState }) {
         />
       </Card>
 
+      {/* ─── Sections 2+3: two-col on desktop (Fix 20) ─── */}
+      <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: isMobile ? 16 : 20, alignItems: "start" }}>
+
       {/* ─── Section 2: Exit Scenario Simulator ─── */}
       <Card>
         <SectionHeader
-          eyebrow="Exit"
           title="Exit scenario simulator"
           subtitle="When do you leave, and with what package?"
         />
@@ -440,7 +470,31 @@ function FreedomView({ state, setState }) {
           <div style={{ fontSize: 36, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)", letterSpacing: "-0.02em", marginBottom: 12 }}>
             {fmtEur(exitPortfolio)}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+
+          {/* Independence snapshot — immediately under the headline number (Fix 10) */}
+          {/* One-big + two-small layout (Fix 11) */}
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+            <div style={{ padding: "16px 18px", background: "var(--surface-1)", borderRadius: 12, borderLeft: "3px solid var(--accent)" }}>
+              <div style={{ fontSize: 11, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Portfolio safely provides</div>
+              <div style={{ fontSize: 30, fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)", marginTop: 4, letterSpacing: "-0.02em" }}>
+                {fmtEur(safeMonthly)}<span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-soft)" }}>/mo</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 6 }}>at 4% initial WR · {fmtEur(safeMonthly * 12)}/yr</div>
+            </div>
+            <CoverageChip
+              label="Essentials"
+              coveragePct={essentialsCoverage}
+              gap={Math.max(0, (state.monthlyEssentialsEUR || 0) - safeMonthly)}
+            />
+            <CoverageChip
+              label="Full lifestyle"
+              coveragePct={lifestyleCoverage}
+              gap={Math.max(0, scenarioExpenses - safeMonthly)}
+            />
+          </div>
+
+          {/* Detail row — pushed below coverage (Fix 10) */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12, paddingTop: 12, borderTop: "1px solid var(--hairline)" }}>
             <div>
               <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Current</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--fg-mute)", fontFamily: "var(--font-mono)" }}>{fmtEurK(portfolio)}</div>
@@ -454,65 +508,58 @@ function FreedomView({ state, setState }) {
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--warn)", fontFamily: "var(--font-mono)" }}>+{fmtEurK(lumpSum)}</div>
             </div>
           </div>
+          {/* Fix 12: rename "Range" to "Best case if negotiated" */}
           <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
-            Range: <strong style={{ color: "var(--fg)" }}>{fmtEur(worstCase)}</strong> (no package) to <strong style={{ color: "var(--fg)" }}>{fmtEur(bestCase12)}</strong> (12mo severance + bonus + 30 days)
+            Best case if you negotiate: <strong style={{ color: "var(--fg)" }}>{fmtEur(bestCase12)}</strong> (12mo severance + bonus + 30 days)
           </div>
-        </div>
-
-        {/* Independence snapshot at exit */}
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr 1fr" : "1fr", gap: 12 }}>
-          {/* Safe income */}
-          <div style={{ padding: "14px 16px", background: "var(--surface-1)", borderRadius: 12, borderLeft: "3px solid var(--accent)" }}>
-            <div style={{ fontSize: 11, color: "var(--fg-soft)", marginBottom: 4 }}>Portfolio safely provides</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>{fmtEur(safeMonthly)}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}>/mo</span></div>
-            <div style={{ fontSize: 10, color: "var(--fg-soft)", marginTop: 4 }}>at {fmtPct(GK_CONFIG.IWR * 100, 0)} initial WR</div>
-          </div>
-          {/* Essentials coverage */}
-          {(() => {
-            const essGap = Math.max(0, (state.monthlyEssentialsEUR || 0) - safeMonthly);
-            const essColor = essentialsCoverage >= 100 ? "var(--good)" : "var(--warn)";
-            return (
-              <div style={{ padding: "14px 16px", background: "var(--surface-1)", borderRadius: 12, borderLeft: `3px solid ${essColor}` }}>
-                <Row justify="space-between" align="baseline">
-                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Essentials</div>
-                  <Pill tone={essentialsCoverage >= 100 ? "good" : "warn"} size="xs">{essentialsCoverage.toFixed(0)}%</Pill>
-                </Row>
-                <div style={{ fontSize: 18, fontWeight: 700, color: essColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
-                  {fmtEur(Math.min(safeMonthly, state.monthlyEssentialsEUR || 0))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(state.monthlyEssentialsEUR || 0)}</span>
-                </div>
-                {essGap > 0 && <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 4 }}>Gap: {fmtEur(essGap)}/mo needs income</div>}
-                {essGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
-              </div>
-            );
-          })()}
-          {/* Full lifestyle coverage */}
-          {(() => {
-            const lifeGap = Math.max(0, scenarioExpenses - safeMonthly);
-            const lifeColor = lifestyleCoverage >= 100 ? "var(--good)" : lifestyleCoverage >= 70 ? "var(--warn)" : "var(--bad)";
-            return (
-              <div style={{ padding: "14px 16px", background: "var(--surface-1)", borderRadius: 12, borderLeft: `3px solid ${lifeColor}` }}>
-                <Row justify="space-between" align="baseline">
-                  <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Full lifestyle</div>
-                  <Pill tone={lifestyleCoverage >= 100 ? "good" : lifestyleCoverage >= 70 ? "warn" : "bad"} size="xs">{lifestyleCoverage.toFixed(0)}%</Pill>
-                </Row>
-                <div style={{ fontSize: 18, fontWeight: 700, color: lifeColor, fontFamily: "var(--font-mono)", marginTop: 4 }}>
-                  {fmtEur(Math.min(safeMonthly, scenarioExpenses))}<span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> / {fmtEur(scenarioExpenses)}</span>
-                </div>
-                {lifeGap > 0 && <div style={{ fontSize: 11, color: lifeColor, marginTop: 4 }}>Gap: {fmtEur(lifeGap)}/mo needs income</div>}
-                {lifeGap === 0 && <div style={{ fontSize: 11, color: "var(--good)", marginTop: 4 }}>Fully covered by portfolio</div>}
-              </div>
-            );
-          })()}
         </div>
       </Card>
 
       {/* ─── Section 3: Hybrid Income Model ─── */}
       <Card>
         <SectionHeader
-          eyebrow="Post-exit"
           title="Hybrid income model"
           subtitle="Income after leaving work — configure sources in the Plan tab. The portfolio only needs to cover the gap."
         />
+
+        {/* Fix 15: killer insight callout — shown when hybrid income actually reduces the FIRE target */}
+        {monthlyGap > 0 && adjustedFireTarget < fullFireTarget && (() => {
+          const savings = fullFireTarget - adjustedFireTarget;
+          const yearsSaved = cf.surplusMonthly > 0 ? savings / (cf.surplusMonthly * 12) : 0;
+          return (
+            <div style={{
+              marginBottom: 20,
+              padding: isMobile ? 16 : 20,
+              background: "linear-gradient(180deg, var(--good-soft), transparent)",
+              borderRadius: 12,
+              border: "1px solid rgba(108,212,154,0.30)",
+            }}>
+              <Row justify="space-between" align="flex-start" gap={20} wrap={isMobile}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: "var(--good)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, marginBottom: 6 }}>
+                    With hybrid income
+                  </div>
+                  <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", lineHeight: 1.25 }}>
+                    Your FIRE target drops by <span style={{ color: "var(--good)", fontFamily: "var(--font-mono)" }}>{fmtEur(savings)}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--fg-mute)", marginTop: 8, lineHeight: 1.5 }}>
+                    From <strong style={{ fontFamily: "var(--font-mono)", color: "var(--fg-mute)" }}>{fmtEur(fullFireTarget)}</strong> to <strong style={{ fontFamily: "var(--font-mono)", color: "var(--good)" }}>{fmtEur(adjustedFireTarget)}</strong>
+                    {yearsSaved > 0.1 && <>. That's ~{yearsSaved.toFixed(1)} years off your timeline at your current savings rate.</>}
+                  </div>
+                </div>
+                <div style={{
+                  padding: "12px 16px", background: "var(--surface-1)", borderRadius: 12,
+                  border: "1px solid var(--hairline)", textAlign: "center", minWidth: 100,
+                }}>
+                  <div style={{ fontSize: 10, color: "var(--fg-soft)" }}>Effective WR</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: wrZone.color, fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                    {effectiveWR.toFixed(1)}%
+                  </div>
+                </div>
+              </Row>
+            </div>
+          );
+        })()}
 
         <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "1fr 1fr" : "1fr", gap: 20, marginBottom: 20 }}>
           {/* Income sources — read-only from Plan, partner toggle/duration editable here */}
@@ -522,18 +569,23 @@ function FreedomView({ state, setState }) {
               <Pill tone="ghost" size="xs">Edit in Plan</Pill>
             </Row>
 
-            <ReadOnlyIncomeRow
-              label="Freelance / consulting"
-              enabled={state.freelanceEnabled || false}
-              amt={state.freelanceAmt || 0}
-              dur={state.freelanceDur || 600}
-            />
-            <ReadOnlyIncomeRow
-              label="Part-time employment"
-              enabled={state.parttimeEnabled || false}
-              amt={state.parttimeAmt || 0}
-              dur={state.parttimeDur || 600}
-            />
+            {/* Fix 16: only show enabled sources */}
+            {(state.freelanceEnabled || false) && (
+              <ReadOnlyIncomeRow
+                label="Freelance / consulting"
+                enabled={true}
+                amt={state.freelanceAmt || 0}
+                dur={state.freelanceDur || 600}
+              />
+            )}
+            {(state.parttimeEnabled || false) && (
+              <ReadOnlyIncomeRow
+                label="Part-time employment"
+                enabled={true}
+                amt={state.parttimeAmt || 0}
+                dur={state.parttimeDur || 600}
+              />
+            )}
 
             {/* Partner income — amount locked to Plan value, toggle + duration editable */}
             <div>
@@ -558,12 +610,17 @@ function FreedomView({ state, setState }) {
               )}
             </div>
 
-            <ReadOnlyIncomeRow
-              label="Passive / rental / other"
-              enabled={state.passiveEnabled || false}
-              amt={state.passiveAmt || 0}
-              dur={state.passiveDur || 600}
-            />
+            {(state.passiveEnabled || false) && (
+              <ReadOnlyIncomeRow
+                label="Passive / rental / other"
+                enabled={true}
+                amt={state.passiveAmt || 0}
+                dur={state.passiveDur || 600}
+              />
+            )}
+            {!state.freelanceEnabled && !state.parttimeEnabled && !state.passiveEnabled && !partnerIncluded && (
+              <div style={{ fontSize: 12, color: "var(--fg-soft)", fontStyle: "italic" }}>No income sources enabled — configure in Plan tab.</div>
+            )}
           </Stack>
 
           {/* Expenses — read-only from Plan */}
@@ -608,7 +665,7 @@ function FreedomView({ state, setState }) {
             </div>
             <div>
               <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Monthly gap</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: monthlyGap > 0 ? "var(--bad)" : "var(--good)", fontFamily: "var(--font-mono)" }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: monthlyGap > 0 ? "var(--fg)" : "var(--good)", fontFamily: "var(--font-mono)" }}>
                 {monthlyGap > 0 ? fmtEur(monthlyGap) : "Covered"}
               </div>
               {monthlyGap > 0 && <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>/month from portfolio</div>}
@@ -624,7 +681,7 @@ function FreedomView({ state, setState }) {
 
           {monthlyGap > 0 && (
             <div style={{ padding: "12px 14px", background: "var(--surface-1)", borderRadius: 10, fontSize: 13, color: "var(--fg-mute)", lineHeight: 1.6 }}>
-              With avg income of <strong style={{ color: "var(--good)" }}>{fmtEur(avgMonthlyIncome)}/mo</strong>, your portfolio only needs to cover <strong style={{ color: "var(--bad)" }}>{fmtEur(monthlyGap)}/mo</strong>. Your real FIRE target drops from <strong>{fmtEur(fullFireTarget)}</strong> to <strong style={{ color: "var(--accent)" }}>{fmtEur(adjustedFireTarget)}</strong>.
+              With avg income of <strong style={{ color: "var(--good)" }}>{fmtEur(avgMonthlyIncome)}/mo</strong>, your portfolio only needs to cover <strong style={{ color: "var(--fg)" }}>{fmtEur(monthlyGap)}/mo</strong>. Your real FIRE target drops from <strong>{fmtEur(fullFireTarget)}</strong> to <strong style={{ color: "var(--accent)" }}>{fmtEur(adjustedFireTarget)}</strong>.
             </div>
           )}
           {monthlyGap === 0 && avgMonthlyIncome > 0 && (
@@ -635,40 +692,83 @@ function FreedomView({ state, setState }) {
         </div>
       </Card>
 
+      </div>{/* end 2-col grid */}
+
       {/* ─── Section 4: Bucket Drawdown Sequencer ─── */}
       <Card>
         <SectionHeader
-          eyebrow="Drawdown"
           title="Bucket drawdown sequencer"
           subtitle={drawdownData.series.length > 0 ? `Drawing ${fmtEur(snapshotGap)}/mo initially — Cash → XEON → Bonds → VWCE` : "No drawdown needed — all buckets compound untouched"}
         />
 
-        {drawdownData.series.length > 0 ? (
-          <>
-            <DrawdownChart
-              bucketSeries={drawdownData.series}
-              transitions={drawdownData.transitions}
-              months={drawdownData.months}
-              isMobile={isMobile}
-            />
-
-            <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(4, 1fr)" : "1fr 1fr", gap: 10, marginTop: 16 }}>
-              {[
-                { label: "Cash", value: cashRunway, color: BUCKET_META.cash.raw },
-                { label: "XEON", value: xeonRunway, color: BUCKET_META.fortress.raw },
-                { label: "Bonds", value: bondsRunway, color: BUCKET_META.termShield.raw },
-                { label: "Before VWCE", value: totalDefensiveRunway, color: BUCKET_META.growth.raw },
-              ].map(b => (
-                <div key={b.label} style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10, textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: b.color, fontFamily: "var(--font-mono)" }}>
-                    {b.value === Infinity ? "∞" : b.value >= 12 ? `${(b.value / 12).toFixed(1)}y` : `${b.value}mo`}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 2 }}>{b.label} runway</div>
+        {drawdownData.series.length > 0 ? (() => {
+          const vwceAtEnd = drawdownData.series.length > 0
+            ? drawdownData.series[drawdownData.series.length - 1].vwce
+            : 0;
+          const fmtRunway = (v) => v === Infinity ? "∞" : v >= 12 ? `${(v / 12).toFixed(1)}y` : `${v}mo`;
+          return (
+            <>
+              {/* Two-pane chart: defense-only (zoomed) + VWCE growth panel (Fix 13) */}
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--fg-soft)", fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Defense ladder</div>
+                  <DrawdownChart
+                    bucketSeries={drawdownData.series}
+                    transitions={drawdownData.transitions}
+                    months={drawdownData.months}
+                    isMobile={isMobile}
+                    defenseOnly
+                  />
                 </div>
-              ))}
-            </div>
-          </>
-        ) : (
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--fg-soft)", fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Growth bucket (VWCE)</div>
+                  <div style={{ padding: "16px", background: "var(--surface-2)", borderRadius: 12, height: "calc(100% - 28px)", display: "flex", flexDirection: "column", justifyContent: "space-around", gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>At exit</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: BUCKET_META.growth.raw, fontFamily: "var(--font-mono)" }}>{fmtEur(drawdownData.series[0]?.vwce || 0)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>Compounding while defense is used</div>
+                      <div style={{ fontSize: 13, color: "var(--fg-mute)", marginTop: 2, fontFamily: "var(--font-mono)" }}>at {fmtPct(state.gkNominalReturn || 7)} nominal</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>After defense ladder exhausted</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: vwceAtEnd > 0 ? BUCKET_META.growth.raw : "var(--bad)", fontFamily: "var(--font-mono)" }}>
+                        {vwceAtEnd > 0 ? fmtEur(vwceAtEnd) : "Depleted"}
+                        {vwceAtEnd > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-soft)" }}> projected</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Runway stepper (Fix 14) */}
+              <div style={{
+                display: "flex", alignItems: "stretch",
+                background: "var(--surface-2)", borderRadius: 12,
+                border: "1px solid var(--hairline)", overflow: "hidden",
+              }}>
+                {[
+                  { label: "Cash only",    months: cashRunway,          color: BUCKET_META.cash.raw },
+                  { label: "+ Safety",     months: xeonRunway,          color: BUCKET_META.fortress.raw },
+                  { label: "+ Stability",  months: bondsRunway,         color: BUCKET_META.termShield.raw },
+                  { label: "Then Growth",  months: vwceAtEnd > 0 ? Infinity : totalDefensiveRunway, color: BUCKET_META.growth.raw },
+                ].map((step, i, arr) => (
+                  <div key={i} style={{
+                    flex: 1, padding: "14px 16px",
+                    borderRight: i < arr.length - 1 ? "1px solid var(--hairline)" : "none",
+                    borderLeft: `3px solid ${step.color}`,
+                  }}>
+                    <div style={{ fontSize: 11, color: "var(--fg-soft)" }}>{step.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                      {fmtRunway(step.months)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          );
+        })() : (
           <div style={{ padding: 20, background: "var(--good-soft)", borderRadius: 12, textAlign: "center" }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: "var(--good)", marginBottom: 6 }}>No drawdown needed</div>
             <div style={{ fontSize: 13, color: "var(--fg-mute)" }}>
@@ -681,29 +781,41 @@ function FreedomView({ state, setState }) {
       {/* ─── Section 5: Sensitivity Matrix ─── */}
       <Card>
         <SectionHeader
-          eyebrow="Matrix"
           title="Sensitivity matrix"
           subtitle="Withdrawal rate by annual spend vs. income — green is safe, red is danger"
         />
+        {/* Fix 17: "you are here" annotation */}
+        {(() => {
+          const currentSpendK = Math.round(scenarioExpenses * 12 / 1000);
+          const currentIncomeK = Math.round(avgMonthlyIncome * 12 / 1000);
+          const currentWR = effectiveWR;
+          return (
+            <Row gap={10} align="center" style={{ marginBottom: 12 }}>
+              <div style={{ width: 14, height: 14, borderRadius: 3, border: "2px solid var(--accent)", background: "transparent", flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+                You are here: <strong style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>€{currentSpendK}k</strong> spend / <strong style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>€{currentIncomeK}k</strong> income → <strong style={{ color: wrZone.color, fontFamily: "var(--font-mono)" }}>{currentWR.toFixed(1)}% WR</strong>
+              </span>
+            </Row>
+          );
+        })()}
         <SensitivityGrid
           exitPortfolio={exitPortfolio}
           currentSpend={scenarioExpenses * 12}
           currentIncome={avgMonthlyIncome * 12}
           isMobile={isMobile}
         />
-        <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
-          {[
-            { label: "Coast (0%)", bg: "rgba(122,162,255,0.18)", fg: "var(--accent)" },
-            { label: "Prosperity (≤3.2%)", bg: "rgba(108,212,154,0.22)", fg: "var(--good)" },
-            { label: "Safe (≤4%)", bg: "rgba(108,212,154,0.12)", fg: "var(--good)" },
-            { label: "Elevated (≤4.8%)", bg: "rgba(245,184,107,0.18)", fg: "var(--warn)" },
-            { label: "Cut zone (>4.8%)", bg: "rgba(239,115,115,0.18)", fg: "var(--bad)" },
-          ].map(l => (
-            <Row key={l.label} gap={6} align="center">
-              <div style={{ width: 12, height: 12, borderRadius: 3, background: l.bg, border: `1px solid ${l.fg}` }} />
-              <span style={{ fontSize: 10, color: "var(--fg-soft)" }}>{l.label}</span>
-            </Row>
-          ))}
+        {/* Fix 17: gradient strip legend replacing the chip row */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", height: 8, borderRadius: 999, overflow: "hidden", border: "1px solid var(--hairline)" }}>
+            <div style={{ flex: 1, background: "rgba(122,162,255,0.45)" }} title="Coast (0%)" />
+            <div style={{ flex: 1, background: "rgba(108,212,154,0.45)" }} title="Prosperity (<3.2%)" />
+            <div style={{ flex: 1, background: "rgba(108,212,154,0.85)" }} title="Safe (<4%)" />
+            <div style={{ flex: 1, background: "rgba(245,184,107,0.65)" }} title="Elevated (<4.8%)" />
+            <div style={{ flex: 1, background: "rgba(239,115,115,0.65)" }} title="Cut zone (>4.8%)" />
+          </div>
+          <Row justify="space-between" style={{ marginTop: 4, fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
+            <span>Coast</span><span>3.2%</span><span>4.0%</span><span>4.8%</span><span>Cut</span>
+          </Row>
         </div>
       </Card>
 

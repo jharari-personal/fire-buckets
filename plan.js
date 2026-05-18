@@ -7,15 +7,30 @@ function PhaseBadge({ id, label, sub, active, onClick }) {
       onClick={onClick}
       style={{
         flex: 1, minWidth: 0, textAlign: "left",
-        padding: "12px 14px",
-        background: active ? "var(--surface-3)" : "transparent",
-        border: `1px solid ${active ? "var(--hairline-strong)" : "var(--hairline)"}`,
+        padding: "14px 16px",
+        position: "relative",
+        background: active ? "var(--accent-soft)" : "var(--surface-2)",
+        border: `1px solid ${active ? "var(--accent)" : "var(--hairline)"}`,
         borderRadius: 12, cursor: "pointer",
         transition: "all 160ms ease",
+        boxShadow: active ? "0 0 0 3px rgba(122,162,255,0.12)" : "none",
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600, color: active ? "var(--fg)" : "var(--fg-mute)" }}>{label}</div>
-      <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 3 }}>{sub}</div>
+      {active && (
+        <div style={{
+          position: "absolute", left: 12, top: 14, width: 6, height: 6,
+          borderRadius: 999, background: "var(--accent)",
+        }} />
+      )}
+      <div style={{
+        fontSize: 13, fontWeight: 600,
+        color: active ? "var(--accent)" : "var(--fg)",
+        marginLeft: active ? 14 : 0,
+      }}>{label}</div>
+      <div style={{
+        fontSize: 11, color: "var(--fg-soft)", marginTop: 3,
+        marginLeft: active ? 14 : 0,
+      }}>{sub}</div>
     </button>
   );
 }
@@ -32,6 +47,7 @@ function DriftBar({ pct, target, range, color }) {
 
 function PlanView({ state, setState }) {
   const { isMobile } = useViewport();
+  const [showAddIncome, setShowAddIncome] = React.useState(false);
   const cf = deriveCashflow(state);
   const portfolio = (state.bucketVWCE||0) + (state.bucketXEON||0) + (state.bucketFixedIncome||0) + (state.bucketCash||0);
   const phase = cf.phase;
@@ -81,7 +97,6 @@ function PlanView({ state, setState }) {
       {/* Bucket balances — moved here from Today */}
       <Card>
         <SectionHeader
-          eyebrow="Update"
           title="Bucket balances"
           subtitle="Refresh these monthly. Everything else flows from these numbers."
         />
@@ -115,6 +130,11 @@ function PlanView({ state, setState }) {
           title="Targets vs. reality"
           subtitle={`How your buckets compare to ${phase.label} targets.`}
         />
+        <Row gap={16} style={{ marginBottom: 16, fontSize: 11, color: "var(--fg-soft)" }}>
+          <Row gap={6} align="center"><div style={{ width: 12, height: 6, background: "var(--accent)", borderRadius: 999 }} /><span>Actual</span></Row>
+          <Row gap={6} align="center"><div style={{ width: 2, height: 12, background: "var(--fg)", opacity: 0.6 }} /><span>Target</span></Row>
+          <Row gap={6} align="center"><div style={{ width: 12, height: 6, background: "rgba(122,162,255,0.20)", borderRadius: 999 }} /><span>Acceptable range</span></Row>
+        </Row>
         <Stack gap={18}>
           {buckets.map(b => {
             const value = state[b.key] || 0;
@@ -148,7 +168,6 @@ function PlanView({ state, setState }) {
       {/* Income & spending — monthly, dual income, split expenses */}
       <Card>
         <SectionHeader
-          eyebrow="Cashflow"
           title="Monthly income & spending"
           subtitle="The dashboard derives savings/withdrawal from these — no savings-rate slider needed."
         />
@@ -205,14 +224,19 @@ function PlanView({ state, setState }) {
               prefix="€" format={v => v.toLocaleString("en-GB")}
               hint="Travel, shopping, dining out — first lever to pull in lean times."
             />
-            <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10 }}>
+            <div style={{ padding: "14px 16px", background: "var(--surface-2)", borderRadius: 10 }}>
               <Row justify="space-between" align="baseline">
                 <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>Total spending</span>
-                <span style={{ fontSize: 18, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(cf.totalExpenses)}</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(cf.totalExpenses)}</span>
               </Row>
-              <div style={{ fontSize: 11, color: "var(--fg-soft)", marginTop: 4 }}>
-                Annualised {fmtEur(cf.annualExpenses)} · FIRE target {fmtEur(fireTarget)}
-              </div>
+              <Row justify="space-between" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--hairline)" }}>
+                <span style={{ fontSize: 11, color: "var(--fg-soft)" }}>Annualised</span>
+                <span style={{ fontSize: 12, color: "var(--fg-mute)", fontFamily: "var(--font-mono)" }}>{fmtEur(cf.annualExpenses)}</span>
+              </Row>
+              <Row justify="space-between" style={{ marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--fg-soft)" }}>FIRE target (4% IWR)</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>{fmtEur(fireTarget)}</span>
+              </Row>
             </div>
           </Stack>
         </div>
@@ -240,29 +264,28 @@ function PlanView({ state, setState }) {
       {/* Post-exit income sources */}
       <Card>
         <SectionHeader
-          eyebrow="Post-exit"
           title="Income after employment"
           subtitle="Configure income you expect after leaving work. The Freedom tab reads these directly — amounts and durations flow through to the scenario model."
         />
-        <Stack gap={20}>
-          {[
+        {(() => {
+          const incomeSrcs = [
             { label: "Freelance / consulting", enabledKey: "freelanceEnabled", amtKey: "freelanceAmt", durKey: "freelanceDur", max: 8000 },
             { label: "Part-time employment",   enabledKey: "parttimeEnabled",  amtKey: "parttimeAmt",  durKey: "parttimeDur",  max: 6000 },
             { label: "Passive / rental / other", enabledKey: "passiveEnabled", amtKey: "passiveAmt",  durKey: "passiveDur",  max: 3000 },
-          ].map(src => {
-            const enabled = !!state[src.enabledKey];
-            return (
-              <div key={src.label} style={{ opacity: enabled ? 1 : 0.5, transition: "opacity 200ms" }}>
-                <Row gap={12} align="center" style={{ marginBottom: enabled ? 10 : 0 }}>
-                  <Toggle value={enabled} onChange={v => updateState(src.enabledKey, v)} />
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{src.label}</span>
-                  {enabled && (
+          ];
+          const enabledSrcs = incomeSrcs.filter(s => !!state[s.enabledKey]);
+          const disabledSrcs = incomeSrcs.filter(s => !state[s.enabledKey]);
+          return (
+            <Stack gap={20}>
+              {enabledSrcs.map(src => (
+                <div key={src.label}>
+                  <Row gap={12} align="center" style={{ marginBottom: 10 }}>
+                    <Toggle value={true} onChange={v => updateState(src.enabledKey, v)} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{src.label}</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: "var(--good)", fontFamily: "var(--font-mono)", marginLeft: "auto" }}>
                       {fmtEur(state[src.amtKey] || 0)}/mo{(state[src.durKey] || 600) < 600 ? ` × ${state[src.durKey]}mo` : ""}
                     </span>
-                  )}
-                </Row>
-                {enabled && (
+                  </Row>
                   <Stack gap={8}>
                     <NumberField
                       label="Monthly amount"
@@ -280,19 +303,54 @@ function PlanView({ state, setState }) {
                       accent="var(--fg-soft)"
                     />
                   </Stack>
-                )}
-              </div>
-            );
-          })}
-          <div style={{ padding: "12px 14px", background: "var(--surface-2)", borderRadius: 10, fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
-            Partner income of <strong style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(state.monthlySalaryPartnerEUR || 0)}/mo</strong> is set above in the income section. Toggle its inclusion and duration in the Freedom tab.
-          </div>
-        </Stack>
+                </div>
+              ))}
+              {disabledSrcs.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowAddIncome(v => !v)}
+                    style={{
+                      width: "100%", padding: "14px 16px",
+                      background: "var(--surface-2)", border: "1px dashed var(--hairline-strong)",
+                      borderRadius: 12, color: "var(--fg-mute)", cursor: "pointer",
+                      fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
+                    {enabledSrcs.length > 0 ? "Add another income source" : "Add a future income source"}
+                    <span style={{ fontSize: 11 }}>{showAddIncome ? "▲" : "▾"}</span>
+                  </button>
+                  {showAddIncome && (
+                    <Stack gap={8} style={{ marginTop: 8 }}>
+                      {disabledSrcs.map(src => (
+                        <button
+                          key={src.label}
+                          onClick={() => { updateState(src.enabledKey, true); setShowAddIncome(false); }}
+                          style={{
+                            width: "100%", padding: "11px 14px",
+                            background: "var(--surface-2)", border: "1px solid var(--hairline)",
+                            borderRadius: 10, color: "var(--fg-mute)", cursor: "pointer",
+                            fontSize: 13, display: "flex", alignItems: "center", gap: 10,
+                            fontFamily: "inherit", textAlign: "left",
+                          }}
+                        >
+                          <span style={{ fontSize: 14, color: "var(--fg-soft)", lineHeight: 1 }}>+</span>
+                          {src.label}
+                        </button>
+                      ))}
+                    </Stack>
+                  )}
+                </div>
+              )}
+            </Stack>
+          );
+        })()}
       </Card>
 
       {/* Assumptions */}
       <Card>
-        <SectionHeader eyebrow="Assumptions" title="Returns & inflation" />
+        <SectionHeader title="Returns & inflation" />
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 16 }}>
           <NumberField
             label="Expected nominal return"

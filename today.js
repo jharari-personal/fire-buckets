@@ -25,7 +25,7 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
   );
 }
 
-function GKZoneRibbon({ wr, isMobile }) {
+function GKZoneRibbon({ wr, isMobile, currentAnnual, proposedAnnual }) {
   const min = 0, max = 8;
   const pct = Math.min(1, Math.max(0, (wr - min) / (max - min)));
   const upperPct = (GK_CONFIG.UPPER_GUARDRAIL * 100 - min) / (max - min);
@@ -56,12 +56,13 @@ function GKZoneRibbon({ wr, isMobile }) {
         <div style={{ position: "absolute", left: `${iwrPct * 100}%`, right: `${(1 - lowerPct) * 100}%`, top: 0, bottom: 0, background: "rgba(245,184,107,0.18)" }} />
         <div style={{ position: "absolute", left: `${lowerPct * 100}%`, right: 0, top: 0, bottom: 0, background: "rgba(239,115,115,0.18)", borderTopRightRadius: 999, borderBottomRightRadius: 999 }} />
         <div style={{
-          position: "absolute", left: `${pct * 100}%`, top: -6,
-          width: 22, height: 22, borderRadius: "50%",
-          background: zone.color, border: "3px solid var(--bg)",
+          position: "absolute", left: `${pct * 100}%`, top: -7,
+          width: 24, height: 24, borderRadius: "50%",
+          background: "var(--fg)",
+          border: `4px solid ${zone.color}`,
           transform: "translateX(-50%)",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
-          transition: "left 400ms cubic-bezier(.2,.9,.3,1)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.5), 0 0 0 2px var(--bg)",
+          transition: "left 400ms cubic-bezier(.2,.9,.3,1), border-color 400ms ease",
         }} />
       </div>
       <div style={{ position: "relative", marginTop: 10, height: 14 }}>
@@ -76,11 +77,15 @@ function GKZoneRibbon({ wr, isMobile }) {
       <div style={{ fontSize: 13, color: "var(--fg-mute)", lineHeight: 1.6, marginTop: 14 }}>
         {wr <= 0
           ? "You're not drawing from the portfolio yet. The withdrawal rate becomes meaningful once you stop earning."
-          : zone.id === "prosperity" ? "You can sustainably raise withdrawals 10% next year."
-          : zone.id === "safe" ? "Within the safe corridor. No adjustment needed."
-          : zone.id === "elevated" ? "Above the 4% baseline but still below the cut threshold. Watch it."
-          : zone.id === "cut" ? "Above the 4.8% guardrail. The plan calls for a 10% cut next year."
-          : "Drawing comfortably."
+          : zone.id === "cut"
+            ? <>Above the 4.8% guardrail. Next year cut <strong style={{ color: "var(--fg)", fontFamily: "var(--font-mono)" }}>{fmtEur(currentAnnual)}</strong> → <strong style={{ color: "var(--bad)", fontFamily: "var(--font-mono)" }}>{fmtEur(proposedAnnual)}</strong> (−10%).</>
+            : zone.id === "prosperity"
+              ? <>Below the 3.2% guardrail. You can raise <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(currentAnnual)}</strong> → <strong style={{ color: "var(--good)", fontFamily: "var(--font-mono)" }}>{fmtEur(proposedAnnual)}</strong> (+10%).</>
+              : zone.id === "elevated"
+                ? <>Above the 4% baseline. Inflation adjustment next year: <strong style={{ fontFamily: "var(--font-mono)" }}>{fmtEur(currentAnnual)}</strong> → <strong style={{ color: "var(--warn)", fontFamily: "var(--font-mono)" }}>{fmtEur(proposedAnnual)}</strong>. Watch it.</>
+                : zone.id === "safe"
+                  ? "Within the safe corridor. No adjustment needed."
+                  : "Drawing comfortably."
         }
       </div>
     </div>
@@ -365,6 +370,12 @@ function TodayView({ state, setState }) {
 
   const lastWithdrawal = effectiveLastWithdrawal(state);
   const wr = portfolio > 0 ? (lastWithdrawal / portfolio) * 100 : 0;
+  const wrZone = getGKZone(wr);
+  const proposedAnnual = lastWithdrawal > 0
+    ? (wrZone.id === "cut" ? lastWithdrawal * 0.9
+       : wrZone.id === "prosperity" ? lastWithdrawal * 1.1
+       : lastWithdrawal * (1 + Math.min((state.gkInflation || 2.0) / 100, 0.06)))
+    : 0;
 
   const safeMonthly = portfolio * GK_CONFIG.IWR / 12;
   const heroMonthlyExpenses = cf.essentials + cf.fun;
@@ -528,7 +539,7 @@ function TodayView({ state, setState }) {
       {/* GK zone — hidden while accumulating (WR is not meaningful with no draws). */}
       {outlook.mode !== "accumulating" && (
         <Card padding={isMobile ? 20 : 24}>
-          <GKZoneRibbon wr={wr} isMobile={isMobile} />
+          <GKZoneRibbon wr={wr} isMobile={isMobile} currentAnnual={lastWithdrawal} proposedAnnual={proposedAnnual} />
         </Card>
       )}
 
@@ -654,9 +665,9 @@ function TodayView({ state, setState }) {
                     <Row gap={6}>
                       <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--fg)" }}>{pct.toFixed(0)}%</span>
                       {Math.abs(drift) >= 1.5 && (
-                        <span style={{ fontSize: 10, color: drift > 0 ? "var(--warn)" : "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
-                          {drift > 0 ? "+" : ""}{drift.toFixed(0)}
-                        </span>
+                        <Pill tone={drift > 0 ? "warn" : "default"} size="xs">
+                          {drift > 0 ? "+" : "−"}{Math.abs(drift).toFixed(1)} pp
+                        </Pill>
                       )}
                     </Row>
                   </Row>
@@ -671,7 +682,6 @@ function TodayView({ state, setState }) {
       {relevantTriggers.length > 0 && (
         <Card>
           <SectionHeader
-            eyebrow="On the radar"
             title="Decisions ahead"
             subtitle="Triggers relevant to where you are now."
           />

@@ -319,7 +319,7 @@ function App() {
       )}
 
       <main style={{
-        maxWidth: 1080, margin: "0 auto",
+        maxWidth: tab === "freedom" ? 1240 : 1080, margin: "0 auto",
         padding: isMobile ? "16px 16px 96px" : "28px 32px 48px",
       }}>
         <div key={tab} className="fade-in">
