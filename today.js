@@ -45,10 +45,25 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
 
 // ─── MilestoneJourney — horizontal SVG track inside the hero ─────────────
 function MilestoneJourney({ portfolio, milestones, isMobile }) {
-  const bullet = milestones.find(m => m.id === "bulletproof");
-  const max = bullet ? bullet.target : milestones[milestones.length - 1].target;
-  const userX = Math.min(1, portfolio / max);
+  const N = milestones.length; // 4
   const next = milestones.find(m => !m.reached);
+
+  // Evenly space dots so labels and dots align: dot i at (i+1)×(100/N) = 25,50,75,100
+  const sectionW = 100 / N;
+  const dotX = i => (i + 1) * sectionW;
+
+  // User pin: proportional within whichever section they're currently in
+  const passedCount = milestones.filter(m => portfolio >= m.target).length;
+  let userPinX;
+  if (passedCount >= N) {
+    userPinX = 100;
+  } else {
+    const sectionStart = passedCount === 0 ? 0 : dotX(passedCount - 1);
+    const fromTarget  = passedCount === 0 ? 0 : milestones[passedCount - 1].target;
+    const toTarget    = milestones[passedCount].target;
+    const t = Math.max(0, Math.min(1, (portfolio - fromTarget) / (toTarget - fromTarget)));
+    userPinX = sectionStart + t * sectionW;
+  }
 
   return (
     <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
@@ -62,9 +77,9 @@ function MilestoneJourney({ portfolio, milestones, isMobile }) {
       </div>
       <svg viewBox="0 0 100 14" width="100%" height={isMobile ? 36 : 40} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
         <line x1="0" y1="7" x2="100" y2="7" stroke="var(--surface-3)" strokeWidth="2" strokeLinecap="round" />
-        <line x1="0" y1="7" x2={userX * 100} y2="7" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
-        {milestones.map(m => {
-          const x = (m.target / max) * 100;
+        <line x1="0" y1="7" x2={userPinX} y2="7" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+        {milestones.map((m, i) => {
+          const x = dotX(i);
           const reached = portfolio >= m.target;
           return (
             <g key={m.id}>
@@ -75,23 +90,33 @@ function MilestoneJourney({ portfolio, milestones, isMobile }) {
           );
         })}
         <g>
-          <circle cx={userX * 100} cy="7" r="5"
+          <circle cx={userPinX} cy="7" r="5"
             fill="var(--fg)" stroke="var(--accent)" strokeWidth="2"
             style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))" }}
           />
         </g>
       </svg>
-      <Row justify="space-between" style={{ marginTop: 8, fontSize: 10, color: "var(--fg-soft)", fontFamily: "var(--font-mono)" }}>
-        {milestones.map(m => (
-          <span key={m.id} style={{
-            flex: 1, textAlign: "center",
-            color: portfolio >= m.target ? m.color : "var(--fg-soft)",
-            fontWeight: portfolio >= m.target ? 600 : 400,
-          }}>
-            {m.label.replace(" FIRE", "").replace("Recommended", "Rec.")}
-          </span>
-        ))}
-      </Row>
+      {/* Labels absolutely positioned to align with their dots */}
+      <div style={{ position: "relative", height: 20, marginTop: 8 }}>
+        {milestones.map((m, i) => {
+          const x = dotX(i);
+          const isLast = i === N - 1;
+          return (
+            <span key={m.id} style={{
+              position: "absolute",
+              left: `${x}%`,
+              transform: isLast ? "translateX(-100%)" : "translateX(-50%)",
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              color: portfolio >= m.target ? m.color : "var(--fg-soft)",
+              fontWeight: portfolio >= m.target ? 600 : 400,
+              whiteSpace: "nowrap",
+            }}>
+              {m.label.replace(" FIRE", "").replace("Recommended", "Rec.").replace("Aggressive", "Agg.")}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
