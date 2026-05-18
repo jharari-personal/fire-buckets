@@ -65,6 +65,7 @@ function MilestoneJourney({ portfolio, milestones, isMobile }) {
   }
 
   const markerColor = next ? next.color : "var(--good)";
+  const TIER_EMOJI = { lean: "🌱", aggressive: "🔥", recommended: "⭐", bulletproof: "🛡️" };
 
   return (
     <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
@@ -124,7 +125,7 @@ function MilestoneJourney({ portfolio, milestones, isMobile }) {
               fontWeight: portfolio >= m.target ? 600 : 400,
               whiteSpace: "nowrap",
             }}>
-              {m.label.replace(" FIRE", "").replace("Recommended", "Rec.").replace("Aggressive", "Agg.")}
+              {TIER_EMOJI[m.id] || m.id}
             </span>
           );
         })}
@@ -729,9 +730,9 @@ function TodayView({ state, setState }) {
                 </>
               )}
             </div>
-            <MilestoneJourney portfolio={portfolio} milestones={milestones} isMobile={isMobile} />
           </div>
         </Row>
+        <MilestoneJourney portfolio={portfolio} milestones={milestones} isMobile={isMobile} />
       </Card>
 
       {/* ── WR card — directly under hero in drawdown, accent tone ── */}
