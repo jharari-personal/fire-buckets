@@ -20,7 +20,7 @@ function fmtETA(n) {
 }
 
 // ─── ProgressRing ──────────────────────────────────────────────────────────
-function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accent)", label, sub, ticks }) {
+function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accent)", label, sub }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const dash = c * Math.min(1, Math.max(0, value));
@@ -34,19 +34,6 @@ function ProgressRing({ value = 0, size = 132, stroke = 10, color = "var(--accen
           strokeDasharray={`${dash} ${c}`}
           style={{ transition: "stroke-dasharray 600ms cubic-bezier(.2,.9,.3,1)" }}
         />
-        {ticks && ticks.map((t, i) => {
-          const angle = t.position * 2 * Math.PI;
-          const x1 = size/2 + (r - stroke/2 - 2) * Math.cos(angle);
-          const y1 = size/2 + (r - stroke/2 - 2) * Math.sin(angle);
-          const x2 = size/2 + (r + stroke/2 + 2) * Math.cos(angle);
-          const y2 = size/2 + (r + stroke/2 + 2) * Math.sin(angle);
-          return (
-            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke={t.reached ? t.color : "var(--fg-soft)"}
-              strokeWidth={t.reached ? 2.5 : 1.5}
-              strokeLinecap="round" />
-          );
-        })}
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 12 }}>
         <div style={{ fontSize: 26, fontWeight: 700, color: "var(--fg)", letterSpacing: "-0.02em", fontFeatureSettings: '"tnum"' }}>{label}</div>
@@ -667,13 +654,6 @@ function TodayView({ state, setState }) {
     return { ...m, target, months, reached };
   });
 
-  // Ring ticks: normalised against Bulletproof as 100%
-  const ringTicks = milestones.map(m => ({
-    position: Math.min(1, m.target / bulletproofTarget),
-    color: m.color,
-    reached: portfolio >= m.target,
-  }));
-
   const relevantTriggers = evaluateTriggers(state);
 
   return (
@@ -688,7 +668,6 @@ function TodayView({ state, setState }) {
             label={`${Math.round(ringProgress * 100)}%`}
             sub="of FIRE"
             color={ringProgress >= 1 ? "var(--good)" : "var(--accent)"}
-            ticks={ringTicks}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, color: "var(--fg-soft)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 8 }}>
