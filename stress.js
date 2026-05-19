@@ -194,13 +194,49 @@ function StressView({ state, setState }) {
           }
         />
 
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
-          <PrecisionSlider label="Equity volatility (σ)" value={mcEquitySigma} onChange={setMcEquitySigma} min={8} max={30} step={0.5} suffix="%" />
-          <PrecisionSlider label="Inflation volatility (σ)" value={mcInflationSigma} onChange={setMcInflationSigma} min={0.5} max={5} step={0.1} suffix="%" />
-          <PrecisionSlider label="Number of paths" value={mcPaths} onChange={setMcPaths} min={200} max={3000} step={200} format={v => v.toLocaleString()} />
-          <PrecisionSlider label="Stock-bond correlation (ρ)" value={mcRho} onChange={setMcRho} min={-0.6} max={0.8} step={0.05} format={v => v.toFixed(2)} hint="0 = independent; +0.4 = 2022-style co-crash" />
-          <PrecisionSlider label="Equity-inflation correlation (ρ)" value={mcRhoEqInf} onChange={setMcRhoEqInf} min={-0.7} max={0.1} step={0.05} format={v => v.toFixed(2)} hint="Negative: high inflation → lower equity returns" />
-          <PrecisionSlider label="Bond-inflation correlation (ρ)" value={mcRhoBdInf} onChange={setMcRhoBdInf} min={-0.9} max={0.1} step={0.05} format={v => v.toFixed(2)} hint="Negative: rising inflation → rising rates → bond losses" />
+<div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12, marginBottom: 18 }}>
+          <PrecisionSlider 
+            label="Equity volatility (σ)" 
+            value={mcEquitySigma} 
+            onChange={setMcEquitySigma} 
+            min={8} max={30} step={0.5} suffix="%" 
+            hint="Measures how widely stock returns swing year-to-year. Higher values mean sharper crashes and larger potential gains." 
+          />
+          <PrecisionSlider 
+            label="Inflation volatility (σ)" 
+            value={mcInflationSigma} 
+            onChange={setMcInflationSigma} 
+            min={0.5} max={5} step={0.1} suffix="%" 
+            hint="Represents the unpredictability of annual inflation rates. Higher values mean greater uncertainty about future purchasing power." 
+          />
+          <PrecisionSlider 
+            label="Number of paths" 
+            value={mcPaths} 
+            onChange={setMcPaths} 
+            min={200} max={3000} step={200} format={v => v.toLocaleString()} 
+            hint="The number of alternate futures the simulation generates. More paths improve accuracy but require more processing time." 
+          />
+          <PrecisionSlider 
+            label="Stock-bond correlation (ρ)" 
+            value={mcRho} 
+            onChange={setMcRho} 
+            min={-0.6} max={0.8} step={0.05} format={v => v.toFixed(2)} 
+            hint="Indicates if stocks and bonds move together. Positive values mean they crash simultaneously; negative means bonds act as a safe haven." 
+          />
+          <PrecisionSlider 
+            label="Equity-inflation correlation (ρ)" 
+            value={mcRhoEqInf} 
+            onChange={setMcRhoEqInf} 
+            min={-0.7} max={0.1} step={0.05} format={v => v.toFixed(2)} 
+            hint="Shows how stock returns react to inflation spikes. Negative values imply that rising inflation typically suppresses real equity growth." 
+          />
+          <PrecisionSlider 
+            label="Bond-inflation correlation (ρ)" 
+            value={mcRhoBdInf} 
+            onChange={setMcRhoBdInf} 
+            min={-0.9} max={0.1} step={0.05} format={v => v.toFixed(2)} 
+            hint="Shows how bond values react to inflation. Negative values mean rising inflation triggers higher interest rates, causing bond prices to drop." 
+          />
         </div>
 
         {mcResult ? (
